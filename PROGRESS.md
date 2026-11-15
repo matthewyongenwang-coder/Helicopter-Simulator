@@ -5,8 +5,8 @@
 | # | Milestone | Status |
 |---|---|---|
 | 1 | Architecture + headless flight model, controls, autohover, physics tests | **Done** |
-| 2 | Terrain streaming, water, biomes, seed | In progress |
-| 3 | Settlements, roads, bridges, forests, props | Not started |
+| 2 | Terrain streaming, water, biomes, seed | **Done** |
+| 3 | Settlements, roads, bridges, forests, props | In progress |
 | 4 | Six aircraft, models, spawn menu | Not started (spec data for all six already written) |
 | 5 | HUD, cameras, audio, weather, day/night, damage, polish | Not started |
 | 6 | Performance pass, playtest, README | Not started |
@@ -33,8 +33,40 @@ Verified by tests, on the medium aircraft unless noted:
 | Ground effect, translational lift, vortex ring, retreating-blade stall, autorotation, power and weight limits, fuel burn, top speed | Pass |
 | Suspension, hard landing damage, crash, rotor strike, tail strike, water | Pass |
 
+## Milestone 2
+
+- `src/world/`: seeded simplex noise, the terrain function (continents, hills, ridged
+  mountains, lakes, rivers carved to sea level), biome classification and chunk mesh
+  generation. Pure functions of `(seed, x, z)`.
+- `src/render/`: engine with a floating origin, terrain quadtree (7 LOD levels, skirts,
+  parent stays until all four children are ready), water, sky. Meshes are built in workers.
+- `src/game/`: frame loop, chase camera, keyboard input, the `Environment` the flight model
+  flies in. Runs in the browser with `npm run dev`. The HUD is a temporary text read-out.
+- Seed: random per launch, shown on screen as `XXXX-XXX`, settable with `?seed=`.
+
+Verified:
+
+| Check | Result |
+|---|---|
+| Same seed, same world | Heights and chunk bytes identical (`tests/world`, 12 tests) |
+| Different seeds differ; launches pick different seeds | Pass |
+| 20 minute straight flight never reaches an edge | 102 km on four headings, plus chunks at 1,000–8,000 km out |
+| Loads, frame rate, console errors (`npm run e2e`, headless Chromium on the GPU) | Ready in about 1 s, 60 fps, no errors, on two seeds |
+| No pop-in at speed | 45 s at 165 kt: every LOD split was ready on time, queue never above 5 jobs |
+| Floating origin | Re-centres during the cruise (0 → 3072 m) |
+| Memory | Geometry count stays bounded in the cruise (208 → max 339) |
+
+Generation costs about 0.7 µs per height sample and 8 ms per 64-cell chunk.
+
 ## Decisions
 
+- **One water level.** Sea, lakes and rivers all sit at y = 0. Rivers are the zero contour of
+  a warped noise field and fade out as the ground climbs, so they never run uphill.
+- **Physics reads the analytic height**, not the mesh. The shortest terrain wavelength is
+  48 m, so the two differ by a couple of centimetres at most.
+- **Shallow water shows the bed; deep water does not.** The terrain shader fades the sea bed
+  to the water colour with depth, and a dark floor plane sits under everything, so chunks
+  that are entirely deep are not drawn at all.
 - **Rate-command attitude.** Pitch, roll and yaw are control moment against rotor damping.
   Nothing returns the aircraft to level. A fin adds weathervaning in yaw at speed, which is
   what makes a banked turn come round.
