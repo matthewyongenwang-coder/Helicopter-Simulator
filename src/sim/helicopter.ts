@@ -133,6 +133,8 @@ export class Helicopter {
   private rng: () => number;
   private buffetPhase = 0;
   private failTimer = 0;
+  /** Accumulated over-torque exposure, s. */
+  overTorque = 0;
   private readonly ro = {} as RotorOut;
   private readonly fs: FlightState;
 
@@ -201,6 +203,7 @@ export class Helicopter {
     this.destroyedReason = '';
     this.pedalTrim = 0;
     this.govInt = 0;
+    this.overTorque = 0;
     this.brake = true;
     this.autohover.reset();
     this.autohover.engaged = false;
@@ -366,7 +369,7 @@ export class Helicopter {
       }
     } else if (this.engine === 'running') {
       const err = 1 - this.rotorN;
-      const qLimit = Math.min(E.torqueLimit * Qr, pAvail / Math.max(omega, 0.6 * ac.omega0));
+      const qLimit = Math.min(E.torqueLimit * Qr, (E.transientPower * pAvail) / Math.max(omega, 0.6 * ac.omega0));
       const qWant = qAero + qLoss + (E.governorKp * err + this.govInt) * Qr;
       qCmd = clamp(qWant, 0, qLimit);
       // Integrate only while the governor is in authority (no wind-up at the stops).
@@ -378,6 +381,12 @@ export class Helicopter {
     this.rotorN = Math.max(0, this.rotorN + ((this.qEng - qAero - qLoss) / (ac.rotorInertia * ac.omega0)) * dt);
     this.rotorAngle = (this.rotorAngle + omega * dt) % (Math.PI * 2);
     if (this.rotorN > E.overspeed && this.rotorOk) this.applyDamage(0.25 * dt * d.damage.fragility, 'rotor overspeed');
+
+    // Sustained over-torque wears the transmission.
+    const over = this.qEng / Qr - 1.02;
+    if (over > 0) this.overTorque = Math.min(this.overTorque + (dt * over) / (E.transientPower - 1.02), E.overTorqueSeconds + 1);
+    else this.overTorque = Math.max(0, this.overTorque - 0.25 * dt);
+    if (this.overTorque > E.overTorqueSeconds) this.applyDamage(E.overTorqueDamage * d.damage.fragility * dt, 'Transmission failure');
 
     // Fuel.
     const enginePower = this.qEng * omega;
@@ -399,10 +408,12 @@ export class Helicopter {
     // --- Forces ---------------------------------------------------------------
     const F = this.F.set(0, -weight, 0);
     F.addScaled(up, thrust);
-    const qd = 0.5 * rho * airspeed;
-    this.t1.set(-qd * ac.fSide * vb.x, -qd * ac.fVert * vb.y, -qd * ac.fFwd * vb.z);
-    this.q.rotate(this.t1, this.t1);
-    F.add(this.t1);
+    // Drag opposes the relative wind; the flat-plate area depends on which side faces it.
+    if (airspeed > 1e-3) {
+      const inv2 = 1 / (airspeed * airspeed);
+      const fEff = (ac.fSide * vb.x * vb.x + ac.fVert * vb.y * vb.y + ac.fFwd * vb.z * vb.z) * inv2;
+      F.addScaled(this.vrel, -0.5 * rho * airspeed * fEff);
+    }
 
     // --- Moments (body axes) --------------------------------------------------
     const M = this.M;
@@ -614,9 +625,9 @@ export class Helicopter {
     let warn = 0;
     const running = this.engine === 'running';
     const flying = !anyGear || gearForce < 0.5 * weight;
-    if ((running || this.engine === 'failed') && this.rotorN < E.greenMin && (flying || this.collective > 0.2)) warn |= Warn.LowRotorRpm;
+    if (this.rotorN < E.greenMin && (flying ? this.rotorN > 0.05 || !anyGear : running && this.collective > 0.2)) warn |= Warn.LowRotorRpm;
     if (this.rotorN > E.greenMax) warn |= Warn.HighRotorRpm;
-    if (tel.torque > 1.0) warn |= Warn.OverTorque;
+    if (tel.torque > 1.02) warn |= Warn.OverTorque;
     if (tel.fuelFraction < 0.12) warn |= Warn.LowFuel;
     if (this.engine === 'failed' || (this.engine === 'off' && flying && this.rotorN > 0.2)) warn |= Warn.EngineOut;
     if (ro.vortexRing > 0.25) warn |= Warn.VortexRing;

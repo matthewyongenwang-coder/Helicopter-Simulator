@@ -91,7 +91,10 @@ export interface AircraftData {
     points: [number, number, number][];
     stroke: number;
   };
-  /** Rigid hull contact spheres [x, y, z, radius, kind]. kind: 0 hull, 1 tail. */
+  /**
+   * Rigid hull contact spheres [x, y, z, radius, kind]. kind: 0 hull, 1 tail.
+   * Belly spheres sit 0.1 m above the gear's bump stop, so the hull only touches once the gear has bottomed.
+   */
   hull: [number, number, number, number, number][];
   damage: {
     /** Multiplier on damage taken. Lower is tougher. */
@@ -128,8 +131,8 @@ const scout: AircraftData = {
     stroke: 0.22,
   },
   hull: [
-    [0, -0.55, -1.7, 0.55, 0],
-    [0, -0.35, 0.3, 0.6, 0],
+    [0, -0.33, -1.7, 0.55, 0],
+    [0, -0.28, 0.3, 0.6, 0],
     [0, 0.25, 4.6, 0.3, 1],
     [0, 1.0, 4.9, 0.25, 1],
   ],
@@ -162,8 +165,8 @@ const utility: AircraftData = {
     stroke: 0.26,
   },
   hull: [
-    [0, -0.6, -2.9, 0.75, 0],
-    [0, -0.45, 0.2, 0.85, 0],
+    [0, -0.34, -2.9, 0.75, 0],
+    [0, -0.24, 0.2, 0.85, 0],
     [0, 0.35, 7.6, 0.35, 1],
     [0, 1.9, 8.3, 0.3, 1],
   ],
@@ -183,7 +186,7 @@ const medium: AircraftData = {
   engine: { count: 2, powerKW: 2100, spoolTime: 15, responseTau: 0.45 },
   perf: { topSpeedKts: 159, vneKts: 180 },
   handling: { pitchRate: 36, rollRate: 46, yawRate: 55, attTau: 0.18, yawTau: 0.3, collectiveRate: 0.4 },
-  autohover: { maxTilt: 48, maxRate: 180, authority: 2.0 },
+  autohover: { maxTilt: 48, maxRate: 220, authority: 2.0 },
   body: { length: 15.3, width: 2.4, height: 3.8, sideDrag: 5, vertDrag: 7, gyration: 0.18 },
   gear: {
     type: 'wheels',
@@ -195,8 +198,8 @@ const medium: AircraftData = {
     stroke: 0.36,
   },
   hull: [
-    [0, -0.7, -3.6, 0.85, 0],
-    [0, -0.55, 0.4, 0.95, 0],
+    [0, -0.47, -3.6, 0.85, 0],
+    [0, -0.37, 0.4, 0.95, 0],
     [0, 0.2, 8.9, 0.4, 1],
     [0, 1.8, 9.9, 0.35, 1],
   ],
@@ -228,9 +231,9 @@ const heavy: AircraftData = {
     stroke: 0.42,
   },
   hull: [
-    [0, -1.0, -6.8, 1.2, 0],
-    [0, -0.9, 0.0, 1.4, 0],
-    [0, -0.6, 5.5, 1.2, 0],
+    [0, -0.78, -6.8, 1.2, 0],
+    [0, -0.58, 0.0, 1.4, 0],
+    [0, -0.78, 5.5, 1.2, 0],
     [0, 0.6, 12.8, 0.55, 1],
     [0, 2.8, 14.6, 0.45, 1],
   ],
@@ -262,8 +265,8 @@ const attack: AircraftData = {
     stroke: 0.4,
   },
   hull: [
-    [0, -0.75, -4.2, 0.7, 0],
-    [0, -0.55, 0.3, 0.8, 0],
+    [0, -0.5, -4.2, 0.7, 0],
+    [0, -0.4, 0.3, 0.8, 0],
     [0, 0.3, 8.4, 0.38, 1],
     [0, 2.0, 9.0, 0.32, 1],
   ],
@@ -295,8 +298,8 @@ const rescue: AircraftData = {
     stroke: 0.34,
   },
   hull: [
-    [0, -0.7, -3.4, 0.8, 0],
-    [0, -0.55, 0.2, 0.9, 0],
+    [0, -0.38, -3.4, 0.8, 0],
+    [0, -0.28, 0.2, 0.9, 0],
     [0, 0.5, 7.4, 0.38, 1],
     [0, 2.1, 8.4, 0.32, 1],
   ],

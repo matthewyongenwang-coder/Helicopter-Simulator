@@ -1,7 +1,7 @@
 import { TUNING } from '../data/tuning';
 import type { Commands, FlightState, Helicopter } from './helicopter';
-import { clamp, G, lagAlpha, smoothstep, Vec3, wrapPi } from './math';
-import { hoverThrust, pitchForThrust } from './rotor';
+import { clamp, DEG, G, lagAlpha, lerp, smoothstep, Vec3, wrapPi } from './math';
+import { groundFactor, inflowRatio, pitchForThrust, stallLimit, vortexRingFactor } from './rotor';
 import type { ControlInput } from './types';
 
 export type AutohoverMode = 'off' | 'standby' | 'brake' | 'hold' | 'pilot';
@@ -70,12 +70,40 @@ export class Autohover {
     const omega = h.rotorN * ac.omega0;
     const up = fs.up;
 
-    // --- What the rotor can deliver right now ---------------------------------
-    const tPitch = hoverThrust(ac, ac.thetaMax, omega, fs.rho);
+    // --- What the rotor can deliver right now, in this flight state ----------
+    const RT = TUNING.rotor;
     const vTip = omega * ac.R;
-    const profile = (fs.rho * ac.area * vTip ** 3 * ac.sigma * TUNING.rotor.cd0) / 8;
+    const mu = fs.vt / vTip;
+    const kG = groundFactor(ac.R, fs.hubAgl, fs.vt, h.vi);
+    // Blade-pitch limit: thrust at full collective with the present inflow.
+    const ctFull = stallLimit(
+      0.5 * ac.sigma * RT.liftSlope * ((ac.thetaMax / 3) * (1 + 1.5 * mu * mu) - (fs.vc + h.vi * kG) / (2 * vTip)),
+      ac.ctMax,
+    );
+    const tPitch = Math.max(fs.rho * ac.area * vTip * vTip * ctFull, 0.2 * weight);
+    // Power limit: the thrust whose shaft power fits the engine, counting what the
+    // airflow gives back when the disc is tilted against the motion.
     const pAvail = ac.powerMax * Math.pow(fs.rho / TUNING.atmosphere.rho0, TUNING.atmosphere.powerLapse);
-    const tPower = Math.pow((Math.max(1.2 * pAvail - profile, 0.1 * pAvail) * Math.sqrt(2 * fs.rho * ac.area)) / TUNING.rotor.kappa, 2 / 3);
+    // Budget transient power while RPM is healthy; give it back as the rotor droops.
+    const transient =
+      lerp(A.powerDrooped, A.powerTransient, smoothstep(0.955, 0.985, h.rotorN)) -
+      A.droopBackoff * smoothstep(0.955, 0.925, h.rotorN);
+    const profile = (fs.rho * ac.area * vTip ** 3 * ac.sigma * RT.cd0 * (1 + 4.65 * mu * mu)) / 8;
+    const budget = (transient * pAvail - RT.accessoryFraction * ac.powerMax) / (1 + RT.tailPowerFraction) - profile;
+    const rotorPower = (t: number): number => {
+      const vh = Math.max(0.5, Math.sqrt(t / (2 * fs.rho * ac.area)));
+      return RT.kappa * t * vh * inflowRatio(fs.vc / vh, fs.vt / vh) * kG + t * fs.vc;
+    };
+    let tPower = tPitch;
+    if (rotorPower(tPitch) > budget) {
+      let lo = 0.2 * weight, hi = tPitch;
+      for (let i = 0; i < 14; i++) {
+        const mid = 0.5 * (lo + hi);
+        if (rotorPower(mid) > budget) hi = mid;
+        else lo = mid;
+      }
+      tPower = lo;
+    }
     const tMax = Math.min(tPitch, tPower);
     const tPlan = A.thrustReserve * tMax;
 
@@ -105,7 +133,7 @@ export class Autohover {
       const vy = h.vel.y;
       let vyDes = 0;
       if (this.holdAlt === null) {
-        if (Math.abs(vy) < A.captureVerticalSpeed) this.holdAlt = h.pos.y;
+        if (Math.abs(vy) < A.captureVerticalSpeed) this.holdAlt = h.pos.y + vy / A.verticalGain;
       } else {
         const e = this.holdAlt - h.pos.y;
         const lim = Math.min(A.maxVerticalSpeed, Math.sqrt(2 * 0.35 * G * Math.abs(e)) + 0.2);
@@ -115,10 +143,6 @@ export class Autohover {
       if (Math.abs(vyDes - vy) < 1.5) {
         this.thrustInt = clamp(this.thrustInt + A.thrustIntegral * fs.mass * (vyDes - vy) * dt, -0.3 * weight, 0.3 * weight);
       }
-      const tDes = clamp((fs.mass * (G + ayDes)) / Math.max(up.y, 0.35) + this.thrustInt, 0.05 * weight, tMax);
-      const thetaDes = pitchForThrust(ac, tDes, omega, fs.rho, fs.vc, fs.vt, fs.hubAgl);
-      const leverDes = clamp((thetaDes - ac.thetaMin) / (ac.thetaMax - ac.thetaMin), 0, 1);
-      cmd.leverRate = clamp((leverDes - h.collective) / dt, -A.leverRate, A.leverRate);
     }
 
     // --- Horizontal: desired acceleration → lean → rate commands ---------------
@@ -159,8 +183,9 @@ export class Autohover {
       this.mode = 'pilot';
     } else {
       if (this.holdX === null && speed < A.captureSpeed && escape === 0) {
-        this.holdX = h.pos.x;
-        this.holdZ = h.pos.z;
+        // Hold where the remaining drift will carry it, so it settles without backing up.
+        this.holdX = h.pos.x + vx / kVel;
+        this.holdZ = h.pos.z + vz / kVel;
       }
       if (escape > 0) this.holdX = null;
       if (this.holdX === null) {
@@ -195,9 +220,27 @@ export class Autohover {
       const across = ax * rx + az * rz;
       ax -= across * rx; az -= across * rz;
     }
-    const aMag = Math.hypot(ax, az);
+    let aMag = Math.hypot(ax, az);
     if (aMag > aMax) {
       ax *= aMax / aMag; az *= aMax / aMag;
+      aMag = aMax;
+    }
+    // Braking leans the disc back into the airflow. If the aircraft is also sinking, a hard
+    // lean would put the rotor into its own wake, so take the steepest lean that stays clear.
+    if (h.vel.y < -1 && speed > 0.5 && ax * vx + az * vz < 0 && aMag > 1e-3) {
+      const vhPlan = Math.sqrt(tPlan / (2 * fs.rho * ac.area));
+      let lean = Math.atan2(aMag, G);
+      for (let i = 0; i < 6 && lean > A.minBrakeTilt * DEG; i++) {
+        const sn = Math.sin(lean), cs = Math.cos(lean);
+        const vcB = (h.vel.y * cs - speed * sn) / vhPlan;
+        const vtB = Math.abs(speed * cs + h.vel.y * sn) / vhPlan;
+        if (vortexRingFactor(vcB, vtB) <= A.maxBrakeRing) break;
+        lean *= 0.8;
+      }
+      const allowed = G * Math.tan(lean);
+      if (aMag > allowed) {
+        ax *= allowed / aMag; az *= allowed / aMag;
+      }
     }
 
     // Desired rotor axis, then the body rotation that gets there.
@@ -206,10 +249,36 @@ export class Autohover {
     const hMag = Math.hypot(ax, az);
     const hs = hMag > hLim ? hLim / hMag : 1;
     this.ud.set(ax * hs, vertical, az * hs).normalize();
+    if (!pilotColl) {
+      // Thrust for the vertical demand at the present lean. While the disc still leans the
+      // wrong way, back off by the part of the thrust that would push the drift faster.
+      let tDes = (fs.mass * (G + ayDes)) / Math.max(up.y, 0.35);
+      const wrongWay = ax * hs * up.x + az * hs * up.z;
+      if (wrongWay < 0 && !pilotPitch && !pilotRoll) tDes = Math.max(tDes + fs.mass * wrongWay, 0.5 * weight);
+      tDes = clamp(tDes + this.thrustInt, 0.05 * weight, tMax);
+      const thetaDes = pitchForThrust(ac, tDes, omega, fs.rho, fs.vc, fs.vt, fs.hubAgl);
+      const leverDes = clamp((thetaDes - ac.thetaMin) / (ac.thetaMax - ac.thetaMin), 0, 1);
+      cmd.leverRate = clamp((leverDes - h.collective) / dt, -A.leverRate, A.leverRate);
+    }
     h.q.rotateInv(this.ud, this.ub);
     const ub = this.ub;
     const errX = Math.atan2(ub.z, ub.y);
     const errZ = Math.atan2(-ub.x, ub.y);
+
+    // While a cyclic key is held the pilot flies that axis, up to a lean limit so that
+    // holding the key gives steady forward flight instead of a loop.
+    const lim = A.pilotTiltLimit * DEG;
+    h.q.rotateInv(this.ud.set(0, 1, 0), this.ud);
+    if (pilotPitch) {
+      const noseUp = -Math.atan2(this.ud.z, this.ud.y);
+      const room = cmd.wx < 0 ? lim + noseUp : lim - noseUp;
+      cmd.wx = Math.sign(cmd.wx) * Math.min(Math.abs(cmd.wx), kAtt * room);
+    }
+    if (pilotRoll) {
+      const rollLeft = Math.atan2(this.ud.x, this.ud.y);
+      const room = cmd.wz > 0 ? lim - rollLeft : lim + rollLeft;
+      cmd.wz = Math.sign(cmd.wz) * Math.min(Math.abs(cmd.wz), kAtt * room);
+    }
 
     const maxRate = ac.ahMaxRate;
     const cmdLim = d.autohover.authority * maxRate;

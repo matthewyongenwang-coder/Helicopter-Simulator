@@ -30,7 +30,7 @@ export const TUNING = {
     /** Accessory load as a fraction of rated power. */
     accessoryFraction: 0.015,
     /** Static thrust at full collective, as a multiple of max takeoff weight. */
-    maxThrustOverMTOW: 1.18,
+    maxThrustOverMTOW: 1.3,
     /** Flat-pitch blade angle as a fraction of the autorotation pitch at light weight. */
     thetaMinFraction: 0.3,
   },
@@ -82,7 +82,12 @@ export const TUNING = {
     governorKp: 9.0, // rated torques per unit RPM error
     governorKi: 6.0,
     /** Max torque as a multiple of rated (transient limit). */
-    torqueLimit: 1.12,
+    torqueLimit: 1.2,
+    /** Short-term power above the rated figure. Rated power is the 100 % torque mark. */
+    transientPower: 1.15,
+    /** Seconds of full over-torque the transmission tolerates before it takes damage. */
+    overTorqueSeconds: 12,
+    overTorqueDamage: 0.012, // health per second once the allowance is used up
     /** RPM above which the rotor overspeeds and takes damage. */
     overspeed: 1.18,
     /** Shaft friction as a fraction of rated torque. */
@@ -175,12 +180,22 @@ export const TUNING = {
     windIntegral: 0.55,
     maxWindAccel: 4.5,
     /** Fraction of estimated max thrust the controller will plan on. */
-    thrustReserve: 0.92,
+    thrustReserve: 0.95,
+    /** Engine power the controller budgets for, × available: normally, and once RPM has drooped. */
+    powerTransient: 1.13,
+    powerDrooped: 1.0,
+    /** Further power given back as RPM falls from 95.5 % to 92.5 %. */
+    droopBackoff: 0.3,
+    /** Lean (deg) a held cyclic key can reach while autohover is on. */
+    pilotTiltLimit: 32,
     /** Once active, autohover stays in control down to this rotor RPM. */
     dropoutRpm: 0.86,
     /** Vortex-ring protection: sink rates (× hover induced velocity) over which it keeps airspeed on. */
     escapeSinkStart: 0.3,
     escapeSinkFull: 0.55,
+    /** While sinking, braking lean is cut back until the predicted vortex-ring factor is under this. */
+    maxBrakeRing: 0.2,
+    minBrakeTilt: 6, // deg
     /** Airspeed held while escaping, × hover induced velocity. */
     escapeSpeed: 1.3,
   },

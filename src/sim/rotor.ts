@@ -44,6 +44,20 @@ function glauert(vc: number, vt: number): number {
   return 0.5 * (lo + hi);
 }
 
+/**
+ * How deep the rotor is in vortex ring state (0–1), from the axial and in-plane
+ * speeds normalised by hover induced velocity.
+ */
+export function vortexRingFactor(vcBar: number, vtBar: number): number {
+  const V = TUNING.vortexRing;
+  if (vcBar >= V.onsetStart) return 0;
+  return (
+    smoothstep(-V.onsetStart, -V.onsetFull, -vcBar) *
+    (1 - smoothstep(-V.exitStart, -V.exitEnd, -vcBar)) *
+    (1 - smoothstep(V.clearStart, V.clearEnd, vtBar))
+  );
+}
+
 /** Soft blade-stall limit on the thrust coefficient. */
 export function stallLimit(ct: number, ctMax: number): number {
   const knee = 0.8 * ctMax;
@@ -120,14 +134,10 @@ export function rotorAero(
   const vtBar = vt / vh;
 
   // Vortex ring state: powered descent into the rotor's own wake.
-  const V = TUNING.vortexRing;
   let vrs = 0;
-  if (sign > 0 && vcBar < V.onsetStart && thrust > 0) {
-    vrs =
-      smoothstep(-V.onsetStart, -V.onsetFull, -vcBar) *
-      (1 - smoothstep(-V.exitStart, -V.exitEnd, -vcBar)) *
-      (1 - smoothstep(V.clearStart, V.clearEnd, vtBar));
-    thrust *= 1 - V.thrustLoss * vrs;
+  if (sign > 0 && thrust > 0) {
+    vrs = vortexRingFactor(vcBar, vtBar);
+    thrust *= 1 - TUNING.vortexRing.thrustLoss * vrs;
   }
 
   out.viTarget = sign * vh * inflowRatio(vcBar, vtBar);
@@ -192,10 +202,24 @@ export function shaftPower(mainPower: number, ratedPower: number): number {
  * Shaft power for steady level flight at true airspeed v. Used to size drag
  * from the listed top speed and to compute the menu performance figures.
  */
-export function levelFlightPower(g: RotorGeom, tipSpeed: number, ratedPower: number, weight: number, fFwd: number, rho: number, v: number): number {
-  const drag = 0.5 * rho * v * v * fFwd;
+export function levelFlightPower(
+  g: RotorGeom,
+  tipSpeed: number,
+  ratedPower: number,
+  weight: number,
+  fFwd: number,
+  fVert: number,
+  rho: number,
+  v: number,
+): number {
+  // The nose-down tilt that balances drag also turns more of the fuselage into the wind.
+  let alpha = 0, drag = 0;
+  for (let i = 0; i < 4; i++) {
+    const c = Math.cos(alpha), sn = Math.sin(alpha);
+    drag = 0.5 * rho * v * v * (fFwd * c * c + fVert * sn * sn);
+    alpha = Math.atan2(drag, weight);
+  }
   const thrust = Math.hypot(weight, drag);
-  const alpha = Math.atan2(drag, weight);
   const vc = v * Math.sin(alpha);
   const vt = v * Math.cos(alpha);
   const vh = Math.sqrt(thrust / (2 * rho * g.area));

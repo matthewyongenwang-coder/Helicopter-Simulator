@@ -91,7 +91,11 @@ export function deriveAircraft(d: AircraftData): Aircraft {
   // Forward drag area from the listed top speed at rated power.
   const topSpeed = d.perf.topSpeedKts * KTS;
   const vne = d.perf.vneKts * KTS;
-  const fFwd = bisect((f) => levelFlightPower(geom, d.rotor.tipSpeed, powerMax, stdWeight, f, RHO0, topSpeed) - powerMax, 0.02, 40);
+  const fFwd = bisect(
+    (f) => levelFlightPower(geom, d.rotor.tipSpeed, powerMax, stdWeight, f, f * d.body.vertDrag, RHO0, topSpeed) - powerMax,
+    0.02,
+    40,
+  );
 
   // Inertia.
   const kLong = d.body.gyration * d.body.length;
@@ -130,7 +134,8 @@ export function deriveAircraft(d: AircraftData): Aircraft {
   }
 
   // Menu figures from the same model.
-  const pLevel = (v: number, rho = RHO0) => levelFlightPower(geom, d.rotor.tipSpeed, powerMax, stdWeight, fFwd, rho, v);
+  const pLevel = (v: number, rho = RHO0) =>
+    levelFlightPower(geom, d.rotor.tipSpeed, powerMax, stdWeight, fFwd, fFwd * d.body.vertDrag, rho, v);
   const hoverPower = pLevel(0);
   let maxClimb = 0, bestClimbSpeed = 0;
   for (let v = 0; v <= topSpeed; v += 1) {
