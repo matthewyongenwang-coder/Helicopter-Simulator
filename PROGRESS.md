@@ -58,8 +58,48 @@ Verified:
 
 Generation costs about 0.7 µs per height sample and 8 ms per 64-cell chunk.
 
+## Milestone 3
+
+- `src/world/settlements.ts`: one candidate site per 6 km cell; every 18 km block holds a
+  city and two earmarked towns wherever the land allows. Density is 1 downtown and falls
+  smoothly to 0 at the edge. The ground under a settlement is levelled.
+- `src/world/roads.ts`: neighbouring settlements are joined by wandering roads (highways
+  between towns and cities). The height profile is smoothed, grade-limited to 12 % by fill,
+  and becomes a bridge wherever the stretch below it contains water.
+- `src/world/structures.ts`: per 1 km cell, buildings from a street grid (towers, mid-rise,
+  houses by density), street and road ribbons, bridge girders, piers, railings, towers and
+  cables on long spans, helipads (ground and rooftop), street lights, power lines beside
+  some roads, wind farms, boats, distant trees, and collision boxes for all of it.
+- `src/world/forest.ts`: individual trees in 256 m cells near the camera.
+- `src/render/propSystem.ts`: streams and instances the above. Trees shrink away at the edge
+  of their radius instead of popping. Windows, lit windows at night and road markings are
+  drawn in shaders.
+- `src/game/colliders.ts`: buildings, decks, pads and masts as oriented boxes in a grid.
+  Roofs, bridge decks and helipads can be landed on.
+- The game now starts on the nearest city heliport.
+
+Verified (`tests/world/settlements.test.ts`, 18 tests, and `npm run e2e`):
+
+| Check | Result |
+|---|---|
+| A typical area has water, forest, towns, a dense city, roads and a bridge | The 25 km around the start, on 8 seeds in the test and 20 in a survey: every one has all six. Fewest seen: 1 town, 76 towers over 60 m, 21 km of road, 3 bridges |
+| Density fades smoothly | Monotonic from the centre, never more than 0.03 per 10 m |
+| Skyscrapers downtown, houses at the edge | Mean height in the inner quarter is over 1.8× the next ring; over 90 % of houses are in the outer half |
+| Roads follow terrain | Ground meets the road within 0.25 m on land; grade never above 12 % |
+| Bridges | Span real water with at least 6.5 m clearance; deck is landable from above and solid from below |
+| Helipads | One ground pad per settlement, rooftop pads in cities, all reported as helipad surface by the flight model's environment |
+| Browser | City, town, bridge, dusk and night views all 60 fps, 180–260 draw calls, no console errors; the aircraft rests on the city heliport |
+| Memory | The same 6 km round trip twice ends on the same GPU geometry count (277 and 277) |
+
 ## Decisions
 
+- **Settlement kinds are capped by peak density**, so only cities reach tower density and
+  villages are houses only.
+- **Low beach is not a bridge.** A stretch at the waterline only becomes a bridge if it
+  contains water; otherwise the road is carried on fill.
+- **A point more than 2.5 m inside a solid wrecks the aircraft** instead of being pushed out,
+  and contact forces are bounded, so no collision can blow the simulation up.
+- **Trees do not collide.** The brief lists terrain, water, buildings and bridges.
 - **One water level.** Sea, lakes and rivers all sit at y = 0. Rivers are the zero contour of
   a warped noise field and fade out as the ground climbs, so they never run uphill.
 - **Physics reads the analytic height**, not the mesh. The shortest terrain wavelength is

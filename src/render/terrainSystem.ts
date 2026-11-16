@@ -198,6 +198,7 @@ export class TerrainSystem {
       // Nearest first, with large nodes ahead of small ones at the same distance.
       () => this.distance(n) - n.size * 0.5,
       (res) => {
+        if (res.type !== 'terrain') return;
         n.job = null;
         n.state = State.Ready;
         n.minY = res.minY;

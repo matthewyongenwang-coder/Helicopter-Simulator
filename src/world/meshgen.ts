@@ -95,7 +95,7 @@ export function buildTerrainMesh(world: World, x0: number, z0: number, size: num
       normals[k * 3 + 1] = Math.round(ny * 127);
       normals[k * 3 + 2] = Math.round(nz * 127);
       const slope = Math.hypot(dx, dz) / (2 * step);
-      world.terrain.classify(x0 + i * step, z0 + j * step, h, slope, samples[k], surf);
+      world.classify(x0 + i * step, z0 + j * step, h, slope, samples[k], surf);
       colors[k * 4] = Math.min(255, Math.max(0, Math.round(surf.r * 255)));
       colors[k * 4 + 1] = Math.min(255, Math.max(0, Math.round(surf.g * 255)));
       colors[k * 4 + 2] = Math.min(255, Math.max(0, Math.round(surf.b * 255)));

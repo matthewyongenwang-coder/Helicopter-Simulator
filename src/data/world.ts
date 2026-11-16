@@ -12,7 +12,7 @@ export const WORLD = {
     scale: 15000,
     octaves: 4,
     /** Added to the continental noise: higher = more land. */
-    landBias: 0.1,
+    landBias: 0.16,
     /** Height at continental value 1 (land) and depth at −1 (sea), with their curve exponents. */
     landRise: 250,
     landExponent: 1.45,
@@ -90,6 +90,105 @@ export const WORLD = {
 } as const;
 
 export type WorldParams = typeof WORLD;
+
+/** Settlement placement and layout. */
+export const SETTLEMENTS = {
+  /** One candidate site per cell of this size, m. */
+  cellSize: 6000,
+  /** One city per block of this many cells squared. */
+  cityEvery: 3,
+  /** Cells per city block that are earmarked for a town. */
+  townsPerCity: 2,
+  /** Chance that a non-city cell holds a town / village / hamlet (the rest stay empty). */
+  townChance: 0.22,
+  villageChance: 0.32,
+  hamletChance: 0.22,
+  /** Radius range per kind, m: hamlet, village, town, city. */
+  radius: [
+    [130, 180],
+    [270, 370],
+    [560, 760],
+    [1350, 1750],
+  ],
+  /** Site rules: natural elevation range and how much the ground may vary across the site. */
+  minElevation: 5,
+  maxElevation: 150,
+  maxRelief: 0.07, // rise over run across half the radius
+  maxMountain: 0.12,
+  /** Ground is levelled fully inside this fraction of the radius, blending out by `flattenOuter`. */
+  flattenInner: 0.6,
+  flattenOuter: 1.2,
+  /** Fraction of the natural relief left in the levelled core, so towns are not billiard tables. */
+  flattenResidual: 0.06,
+  /** Street grid: block size along and across, by kind. Street half-width, m. */
+  block: [
+    [64, 64],
+    [72, 64],
+    [92, 70],
+    [100, 76],
+  ],
+  streetHalfWidth: 4.5,
+  avenueHalfWidth: 7.5,
+  avenueEvery: 4,
+  /** Density (0–1) above which blocks are built, and where mid-rise and towers begin. */
+  buildDensity: 0.1,
+  midriseDensity: 0.42,
+  towerDensity: 0.72,
+  maxTowerHeight: 230,
+  /** Fraction of suitable flat roofs that carry a helipad. */
+  rooftopPadChance: 0.05,
+  lightSpacing: 46,
+} as const;
+
+export const ROADS = {
+  /** Sample spacing along a road, m. */
+  spacing: 24,
+  /** Sideways wander as a fraction of road length, capped in metres. */
+  wander: 0.11,
+  maxWander: 650,
+  /** Chance of a road between orthogonal / diagonal neighbouring settlements. */
+  orthogonalChance: 0.9,
+  diagonalChance: 0.3,
+  rural: { halfWidth: 4.2 },
+  highway: { halfWidth: 8.5 },
+  /** Roads are dropped if they would need a single bridge longer than this, m. */
+  maxBridge: 950,
+  maxWaterFraction: 0.4,
+  maxElevation: 430,
+  /** Deck height over water and the smoothing window for the road profile (samples each side). */
+  deckHeight: 9,
+  minDeck: 6.5,
+  /** Steepest road grade (rise over run). Steeper ground is bridged by fill. */
+  maxGrade: 0.12,
+  smooth: 5,
+  /** Terrain blends from road level back to natural over this distance past the shoulder, m. */
+  shoulder: 2.5,
+  blend: 26,
+  /** Bridges longer than this get towers and cables. */
+  towerSpan: 240,
+  pierSpacing: 56,
+} as const;
+
+export const PROPS = {
+  /** Structure cells: buildings, roads, bridges, pylons, turbines, boats. */
+  structureCell: 1024,
+  /** Forest cells: individual trees close to the camera. */
+  forestCell: 256,
+  treeSpacing: 10.5,
+  farTreeSpacing: 34,
+  farTreeRadius: 3600,
+  /** Power lines: pylon spacing and offset from the road they follow, m. */
+  pylonSpacing: 260,
+  pylonOffset: 70,
+  pylonHeight: 34,
+  powerLineChance: 0.5,
+  /** Wind farms: chance per structure cell, and the elevation band they like. */
+  windFarmChance: 0.035,
+  turbineHeight: 80,
+  /** Boats per structure cell near a harbour, and the chance of a lone boat elsewhere. */
+  harbourBoats: 4,
+  loneBoatChance: 0.05,
+} as const;
 
 /** Biome ids. Kept small and stable: they are written into chunk data. */
 export const enum Biome {

@@ -83,7 +83,7 @@ try {
     );
     // Let the camera settle and the terrain stream in.
     await page.waitForTimeout(600);
-    await page.waitForFunction(() => window.__game.terrain.settled, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.__game.ready && window.__game.terrain.settled && window.__game.props.settled, null, { timeout: 60000 });
     await page.waitForTimeout(400);
     await page.screenshot({ path: join(out, `${name}.png`) });
     const fps = await measureFps(2);
@@ -91,6 +91,64 @@ try {
     console.log(`shot ${name}: ${fps.toFixed(0)} fps, ${st.shown} nodes, ${(st.triangles / 1000).toFixed(0)}k tris, y=${st.y.toFixed(0)}`);
     check(fps > 25, `frame rate at "${name}"`, `${fps.toFixed(0)} fps`);
   }
+  // Settlements, bridges and night lighting.
+  if (args.world !== '0') {
+    const targets = await page.evaluate(() => window.__game.debugTargets());
+    const goto = async (name, x, z, alt, hdg, hour) => {
+      await page.evaluate(([x, z, alt, hdg, hour]) => {
+        const g = window.__game;
+        g.sky.setTime(hour);
+        g.setPose(x, z, alt, hdg);
+      }, [x, z, alt, hdg, hour]);
+      await page.waitForTimeout(500);
+      await page.waitForFunction(() => window.__game.ready && window.__game.terrain.settled && window.__game.props.settled, null, { timeout: 90000 });
+      await page.waitForTimeout(500);
+      await page.screenshot({ path: join(out, `${name}.png`) });
+      const fps = await measureFps(2);
+      const st = await page.evaluate(() => {
+        const g = window.__game;
+        return { ...g.props.stats, calls: g.engine.renderer.info.render.calls, tris: g.engine.renderer.info.render.triangles, colliders: g.env.colliders.count };
+      });
+      console.log(`shot ${name}: ${fps.toFixed(0)} fps, ${st.calls} draw calls, ${(st.tris / 1e6).toFixed(2)}M tris, ${st.structureCells} structure cells, ${st.forestCells} forest cells, ${st.colliders} colliders`);
+      check(fps > 25, `frame rate at "${name}"`, `${fps.toFixed(0)} fps`);
+      return st;
+    };
+    check(!!targets.city, 'a city exists within 40 km');
+    check(!!targets.bridge, 'a bridge exists within 20 km', targets.bridge ? `${targets.bridge.span.toFixed(0)} m span` : '');
+    if (targets.city) {
+      const c = targets.city;
+      const st = await goto('city', c.x - c.r * 0.75, c.z - c.r * 0.75, 230, 135, 10);
+      check(st.colliders > 500, 'city buildings are solid', `${st.colliders} colliders`);
+      // Street level: parked on the city heliport.
+      const pad = await page.evaluate(([x, z]) => window.__game.helipads(x, z, 3000).find((p) => p.kind === 'ground'), [c.x, c.z]);
+      check(!!pad, 'the city has a ground heliport', pad ? pad.name : '');
+      if (pad) {
+        await page.evaluate((pad) => {
+          const g = window.__game;
+          g.sky.setTime(15);
+          g.spawn(g.aircraft, { x: pad.x, z: pad.z, y: pad.y, heading: pad.heading });
+        }, pad);
+        await page.waitForFunction(() => window.__game.ready && window.__game.props.settled, null, { timeout: 90000 });
+        await page.waitForTimeout(2500);
+        await page.screenshot({ path: join(out, 'city_street.png') });
+        const rest = await page.evaluate(() => {
+          const h = window.__game.sim.heli;
+          return { onGround: h.tel.onGround, kind: h.tel.surfaceKind, health: h.health, y: h.pos.y, vy: h.vel.y };
+        });
+        check(rest.onGround && rest.health === 1 && Math.abs(rest.vy) < 0.05, 'aircraft rests on the helipad', JSON.stringify(rest));
+      }
+      await goto('city_night', c.x - c.r * 0.6, c.z + c.r * 0.5, 180, 50, 22);
+      await goto('city_dusk', c.x + c.r * 0.9, c.z - c.r * 0.2, 320, 265, 18.4);
+    }
+    if (targets.town) await goto('town', targets.town.x - 500, targets.town.z + 350, 150, 60, 11);
+    if (targets.bridge) {
+      const b = targets.bridge;
+      const rad = ((b.heading + 90) * Math.PI) / 180;
+      await goto('bridge', b.x + Math.sin(rad) * 260, b.z - Math.cos(rad) * 260, 70, b.heading - 90, 14);
+    }
+    await page.evaluate(() => window.__game.sky.setTime(10));
+  }
+
   // Cruise: 45 s at 85 m/s (165 kt, 3.8 km), low, watching that terrain streams in ahead of the aircraft.
   if (args.cruise !== '0') {
     const before = await page.evaluate(() => {
@@ -99,7 +157,12 @@ try {
       g.setPose(p.x, p.z, 150, 90, 85);
       return { geometries: g.engine.renderer.info.memory.geometries, ox: g.engine.origin.x, x: p.x };
     });
-    await page.waitForFunction(() => window.__game.terrain.settled, null, { timeout: 60000 });
+    await page.waitForFunction(() => window.__game.ready && window.__game.terrain.settled && window.__game.props.settled, null, { timeout: 60000 });
+    before.geometries = await page.evaluate(() => {
+      // The aircraft waited for the world to load: put the cruise speed back on.
+      window.__game.sim.heli.vel.set(85, 0, 0);
+      return window.__game.engine.renderer.info.memory.geometries;
+    });
     const cruise = await page.evaluate(
       () =>
         new Promise((resolve) => {
@@ -132,7 +195,27 @@ try {
     check(cruise.ox !== before.ox, 'floating origin re-centred during the flight', `${before.ox} → ${cruise.ox}`);
     check(cruise.minLag > 0.6, 'terrain detail arrives before it is needed', `worst lag ratio ${cruise.minLag.toFixed(2)} (1 = on time)`);
     check(cruise.holes === 0, 'no frame without terrain');
-    check(cruise.maxGeo < before.geometries * 1.5 + 50, 'GPU geometry count stays bounded', `${cruise.maxGeo}`);
+    // Leak check: visit the start, go 6 km away, and come back. Arriving at the same place
+    // by the same route must cost the same number of GPU buffers both times.
+    const visit = async (x) => {
+      await page.evaluate(([x]) => {
+        const g = window.__game;
+        g.setPose(x, g.sim.heli.pos.z, 150, 90, 0);
+      }, [x]);
+      await page.waitForTimeout(500);
+      await page.waitForFunction(() => window.__game.ready && window.__game.terrain.settled && window.__game.props.settled, null, { timeout: 60000 });
+      await page.waitForTimeout(500);
+      return page.evaluate(() => window.__game.engine.renderer.info.memory.geometries);
+    };
+    await visit(before.x + 6000);
+    const first = await visit(before.x);
+    await visit(before.x + 6000);
+    const second = await visit(before.x);
+    check(
+      Math.abs(second - first) <= Math.max(4, first * 0.02),
+      'no GPU geometry leak: the same trip costs the same twice',
+      `${first} then ${second} geometries (peak ${cruise.maxGeo} en route)`,
+    );
   }
   check(errors.length === 0, 'no console errors', errors.slice(0, 5).join(' | '));
 } catch (e) {

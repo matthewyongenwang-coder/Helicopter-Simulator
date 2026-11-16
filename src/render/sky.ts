@@ -99,9 +99,12 @@ export class Sky {
           c += uSunColor * smoothstep(0.99955, 0.9998, s) * 6.0 * (1.0 - uOvercast);
           // Stars.
           if (uStars > 0.01 && d.y > 0.0) {
-            vec3 g = floor(d * 220.0);
+            vec3 q = d * 420.0;
+            vec3 g = floor(q);
             float h = hash13(g);
-            float star = step(0.9965, h) * (0.4 + 0.6 * hash13(g + 7.0));
+            // A soft round point inside the cell, not the whole cell.
+            float r = length(fract(q) - 0.5);
+            float star = step(0.9972, h) * (0.35 + 0.65 * hash13(g + 7.0)) * smoothstep(0.42, 0.1, r);
             c += vec3(star) * uStars * smoothstep(0.0, 0.25, d.y) * (1.0 - uOvercast);
           }
           gl_FragColor = vec4(c, 1.0);

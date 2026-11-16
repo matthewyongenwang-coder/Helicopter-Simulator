@@ -1,21 +1,28 @@
 import { airDensity, sampleWind, type WindState } from '../sim/environment';
 import type { Vec3 } from '../sim/math';
-import { SurfaceKind, type Environment, type SurfaceHit } from '../sim/types';
+import { SurfaceKind, type Environment, type SphereContact, type SurfaceHit } from '../sim/types';
+import { ColliderKind } from '../world/structures';
 import type { World } from '../world/world';
+import { ColliderSet } from './colliders';
 
 /**
  * The flight model's view of the generated world: ground height and normal,
- * water, wind. Heights come from the same analytic function the meshes are
- * sampled from, interpolated on a 2 m grid and cached, since the aircraft
- * asks for the same few square metres thousands of times a second near the ground.
+ * water, structures, wind. Heights come from the same analytic function the
+ * meshes are sampled from, interpolated on a 2 m grid and cached, since the
+ * aircraft asks for the same few square metres thousands of times a second
+ * near the ground.
  */
 export class WorldEnvironment implements Environment {
   wind_: WindState = { x: 0, z: 0, gust: 0 };
   /** Extra gustiness from the terrain under the aircraft (set each frame by the game). */
   turbulence = 0;
+  /** Buildings, bridge decks, helipads and masts near the aircraft. */
+  readonly colliders = new ColliderSet();
   private cache = new Map<number, number>();
   private lastAgl = 100;
   private static readonly CELL = 2;
+  /** How far above a probe point a roof may be and still count as the surface under it, m. */
+  private static readonly STEP_UP = 0.75;
 
   constructor(readonly world: World) {}
 
@@ -31,7 +38,7 @@ export class WorldEnvironment implements Environment {
     return h;
   }
 
-  /** Ground height (not water level) at a point. */
+  /** Ground height (not water level, not roofs) at a point. */
   ground(x: number, z: number): number {
     const c = WorldEnvironment.CELL;
     const fx = x / c, fz = z / c;
@@ -42,7 +49,7 @@ export class WorldEnvironment implements Environment {
     return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
   }
 
-  surface(x: number, z: number, _y: number, out: SurfaceHit): void {
+  surface(x: number, z: number, y: number, out: SurfaceHit): void {
     const c = WorldEnvironment.CELL;
     const fx = x / c, fz = z / c;
     const ix = Math.floor(fx), iz = Math.floor(fz);
@@ -54,14 +61,27 @@ export class WorldEnvironment implements Environment {
       out.height = 0;
       out.nx = 0; out.ny = 1; out.nz = 0;
       out.kind = SurfaceKind.Water;
-      return;
+    } else {
+      const dx = ((h10 - h00) * (1 - tz) + (h11 - h01) * tz) / c;
+      const dz = ((h01 - h00) * (1 - tx) + (h11 - h10) * tx) / c;
+      const l = Math.hypot(dx, 1, dz);
+      out.height = h;
+      out.nx = -dx / l; out.ny = 1 / l; out.nz = -dz / l;
+      out.kind = SurfaceKind.Terrain;
     }
-    const dx = ((h10 - h00) * (1 - tz) + (h11 - h01) * tz) / c;
-    const dz = ((h01 - h00) * (1 - tx) + (h11 - h10) * tx) / c;
-    const l = Math.hypot(dx, 1, dz);
-    out.height = h;
-    out.nx = -dx / l; out.ny = 1 / l; out.nz = -dz / l;
-    out.kind = SurfaceKind.Terrain;
+    // A roof, deck or pad under the probe point takes over from the ground below it.
+    if (this.colliders.count > 0) {
+      const top = this.colliders.topAt(x, z, y + WorldEnvironment.STEP_UP);
+      if (top > out.height) {
+        out.height = top;
+        out.nx = 0; out.ny = 1; out.nz = 0;
+        out.kind = this.colliders.lastKind === ColliderKind.Helipad ? SurfaceKind.Helipad : SurfaceKind.Structure;
+      }
+    }
+  }
+
+  collide(x: number, y: number, z: number, r: number, out: SphereContact): boolean {
+    return this.colliders.count > 0 && this.colliders.sphere(x, y, z, r, out);
   }
 
   /** The game tells the environment how high the aircraft is, for the wind profile. */

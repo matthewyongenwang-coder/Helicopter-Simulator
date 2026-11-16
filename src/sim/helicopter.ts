@@ -496,7 +496,7 @@ export class Helicopter {
             }
             p.touching = true;
             if (p.kind === PointKind.Rotor && this.rotorN > 0.25) this.destroy('Rotor strike');
-            let fn = p.k * dn - p.c * vn;
+            let fn = p.k * Math.min(dn, 3) - p.c * vn;
             const G_ = TUNING.gear;
             if (p.kind === PointKind.Gear) {
               p.compression = Math.min(dn, d.gear.stroke);
@@ -553,7 +553,9 @@ export class Helicopter {
             if (!p.wallTouching) this.onImpact(p.kind, Math.max(0, -vn));
             p.wallTouching = true;
             if (p.kind === PointKind.Rotor && this.rotorN > 0.25) this.destroy('Rotor strike');
-            const fn = Math.max(0, p.k * c.depth - p.c * vn);
+            // A point this far inside a solid has not bounced off it: the aircraft is wrecked.
+            if (c.depth > 2.5 && p.kind !== PointKind.Rotor) this.destroy('Crashed into a structure');
+            const fn = Math.max(0, p.k * Math.min(c.depth, 1.2) - p.c * vn);
             const tvx = vP.x - vn * c.nx, tvy = vP.y - vn * c.ny, tvz = vP.z - vn * c.nz;
             const tv = Math.hypot(tvx, tvy, tvz) + 1e-6;
             const ft = Math.min(TUNING.hull.friction * fn, p.c * tv);
@@ -588,6 +590,11 @@ export class Helicopter {
     const wyd = (M.y - (ac.Ixx - ac.Izz) * w.z * w.x) / ac.Iyy;
     const wzd = (M.z - (ac.Iyy - ac.Ixx) * w.x * w.y) / ac.Izz;
     w.x += wxd * dt; w.y += wyd * dt; w.z += wzd * dt;
+    // Keep the state finite whatever a contact did: a wreck may tumble, but not at any speed.
+    const sp = this.vel.len();
+    if (sp > 350) this.vel.scale(350 / sp);
+    const ws = w.len();
+    if (ws > 25) w.scale(25 / ws);
     this.q.integrateBody(w.x, w.y, w.z, dt);
 
     // --- Telemetry ------------------------------------------------------------

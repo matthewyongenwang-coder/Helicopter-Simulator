@@ -3,12 +3,14 @@ import { AIRCRAFT, type AircraftData } from '../data/aircraft';
 import type { QualityName } from '../data/graphics';
 import { Engine } from '../render/engine';
 import { buildHeliModel, type HeliModel } from '../render/heliModel';
+import { PropSystem } from '../render/propSystem';
 import { Sky } from '../render/sky';
 import { TerrainSystem } from '../render/terrainSystem';
 import { Water } from '../render/water';
 import { KTS, Quat, RAD, Vec3 } from '../sim/math';
 import { FIXED_DT, Simulation } from '../sim/simulation';
 import { seedToString } from '../world/rng';
+import { helipadsNear, type Helipad } from '../world/structures';
 import { WorkerPool } from '../world/workerPool';
 import { World } from '../world/world';
 import { KeyboardInput } from './input';
@@ -26,6 +28,9 @@ export interface SpawnPoint {
   x: number;
   z: number;
   heading: number;
+  /** Surface height to stand on (a helipad or roof). Defaults to the ground. */
+  y?: number;
+  name?: string;
 }
 
 /** Top-level orchestration: owns the world, the simulation and the renderer, and runs the frame loop. */
@@ -36,6 +41,7 @@ export class Game {
   readonly pool: WorkerPool;
   readonly terrain: TerrainSystem;
   readonly water: Water;
+  readonly props: PropSystem;
   readonly sky: Sky;
   readonly input = new KeyboardInput();
   sim!: Simulation;
@@ -69,13 +75,25 @@ export class Game {
     this.sky = new Sky(this.engine);
     this.terrain = new TerrainSystem(this.engine, this.pool);
     this.water = new Water(this.engine, this.sky);
+    this.props = new PropSystem(this.engine, this.pool, {
+      onStructures: (key, cell) => this.env.colliders.add(key, cell.x0, cell.z0, cell.colliders),
+      onRemove: (key) => this.env.colliders.remove(key),
+    });
     this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
     this.spawn(this.aircraft, this.findSpawn());
     window.addEventListener('resize', () => this.engine.resize());
   }
 
-  /** A patch of flat dry land near the world origin. */
+  /** Helipads within `range` of a point, nearest first. */
+  helipads(x: number, z: number, range = 30000): Helipad[] {
+    return helipadsNear(this.world, x, z, range);
+  }
+
+  /** Default start: the nearest city heliport to the world origin, else the nearest helipad, else open ground. */
   findSpawn(): SpawnPoint {
+    const pads = this.helipads(0, 0);
+    const pad = pads.find((p) => p.kind === 'ground' && p.rank === 3) ?? pads.find((p) => p.kind === 'ground') ?? pads[0];
+    if (pad) return { x: pad.x, z: pad.z, y: pad.y, heading: pad.heading, name: pad.name };
     for (let ring = 0; ring < 400; ring++) {
       const r = ring * 180;
       const n = Math.max(1, Math.floor(ring * 1.5));
@@ -103,7 +121,9 @@ export class Game {
       this.model.dispose();
     }
     this.aircraft = data;
-    const ground = Math.max(0, this.env.ground(at.x, at.z));
+    const ground = at.y ?? Math.max(0, this.env.ground(at.x, at.z));
+    // Hold the simulation until the buildings and pads around the new position have streamed in.
+    this.ready = false;
     this.sim = new Simulation(
       data,
       this.env,
@@ -167,7 +187,9 @@ export class Game {
     e.camera.lookAt(this.focus.x, this.focus.y + 1.2, this.focus.z);
 
     this.terrain.update(this.camWorld.x, this.camWorld.y, this.camWorld.z);
-    if (!this.ready && this.terrain.settled && this.terrain.stats.generated > 0) this.ready = true;
+    const night = 1 - THREE.MathUtils.smoothstep(this.sky.daylight, 0.12, 0.5);
+    this.props.update(this.camWorld.x, this.camWorld.y, this.camWorld.z, night, this.sky.fog.density);
+    if (!this.ready && this.terrain.settled && this.props.settled && this.terrain.stats.generated > 0) this.ready = true;
     this.sky.update(this.focus);
     this.water.update(this.sky.daylight);
     e.render();
@@ -204,10 +226,31 @@ export class Game {
       `${this.aircraft.name}  ENG ${h.engine.toUpperCase()}  NR ${(t.rotorRpm * 100).toFixed(0)}%  TQ ${(t.torque * 100).toFixed(0)}%`,
       `IAS ${(t.airspeed / KTS).toFixed(0)} kt  ALT ${t.baroAlt.toFixed(0)} m  RAD ${t.radarAlt.toFixed(0)} m  VS ${t.verticalSpeed.toFixed(1)} m/s`,
       `HDG ${(t.heading * RAD).toFixed(0)}°  COLL ${(t.collective * 100).toFixed(0)}%  ${h.autohover.engaged ? 'AUTOHOVER ' + h.autohover.mode.toUpperCase() : ''}`,
-      `${(1000 / this.frameMs).toFixed(0)} fps  nodes ${this.terrain.stats.shown}  tris ${(this.terrain.stats.triangles / 1000).toFixed(0)}k`,
+      `${(1000 / this.frameMs).toFixed(0)} fps  nodes ${this.terrain.stats.shown}  tris ${(this.engine.renderer.info.render.triangles / 1000).toFixed(0)}k  calls ${this.engine.renderer.info.render.calls}`,
       h.destroyed ? `DESTROYED: ${h.destroyedReason}` : '',
     ];
     this.hud.textContent = lines.filter(Boolean).join('\n');
+  }
+
+  /** Points of interest near the aircraft, for tests and screenshots. */
+  debugTargets(): { city?: { x: number; z: number; r: number }; town?: { x: number; z: number; r: number }; bridge?: { x: number; z: number; y: number; heading: number; span: number } } {
+    const p = this.sim.heli.pos;
+    const near = this.world.settlements.within(p.x, p.z, 40000).sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
+    const pick = (kind: number) => {
+      const s = near.find((q) => q.kind === kind);
+      return s ? { x: s.x, z: s.z, r: s.radius } : undefined;
+    };
+    let bridge: { x: number; z: number; y: number; heading: number; span: number } | undefined;
+    for (const road of this.world.roads.inRect(p.x - 20000, p.z - 20000, p.x + 20000, p.z + 20000)) {
+      for (const [a, b] of road.bridges) {
+        const span = road.points[b].s - road.points[a].s;
+        if (!bridge || span > bridge.span) {
+          const m = road.points[Math.floor((a + b) / 2)];
+          bridge = { x: m.x, z: m.z, y: m.y, heading: (Math.atan2(-m.nz, m.nx) * 180) / Math.PI, span };
+        }
+      }
+    }
+    return { city: pick(3), town: pick(2), bridge };
   }
 
   /** Teleport for tests and screenshots: hover at a world position and altitude above ground. */

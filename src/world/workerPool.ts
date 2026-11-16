@@ -63,7 +63,8 @@ export class WorkerPool {
           continue;
         }
         const p = j.priority();
-        if (p < bestP) {
+        // `best < 0` keeps the queue moving even if a priority comes back NaN.
+        if (best < 0 || p < bestP) {
           bestP = p;
           best = i;
         }
