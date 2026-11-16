@@ -1,5 +1,6 @@
 import { AIRCRAFT, AIRCRAFT_ORDER } from '../data/aircraft';
 import { GRAPHICS, type QualityName } from '../data/graphics';
+import { WEATHER, WEATHER_ORDER } from '../data/weather';
 import type { Settings } from '../game/settings';
 import { deriveAircraft } from '../sim/derive';
 import { KTS } from '../sim/math';
@@ -30,12 +31,27 @@ export interface MenuHost {
   /** Park the chosen aircraft at the chosen place so it shows behind the menu. */
   preview(aircraft: string, pad: Helipad | null): void;
   fly(aircraft: string, pad: Helipad | null): void;
+  /** Close the menu and carry on with the flight in progress. */
+  resume(): void;
   /** Reload with a new seed; null picks a random one. */
   reseed(seed: string | null): void;
   setQuality(q: QualityName): void;
   openControls(): void;
   saveSettings(): void;
+  setWeather(id: string): void;
+  /** Start hour, or −1 for the default morning start. */
+  setHour(hour: number): void;
+  setVolume(v: number): void;
 }
+
+const TIMES: [string, number][] = [
+  ['Morning', -1],
+  ['Dawn', 6.2],
+  ['Noon', 12],
+  ['Afternoon', 15.5],
+  ['Dusk', 18.6],
+  ['Night', 22.5],
+];
 
 const fmt = (v: number, digits = 0) => v.toLocaleString('en-US', { maximumFractionDigits: digits, minimumFractionDigits: digits });
 
@@ -69,6 +85,9 @@ export class Menu {
   private specs = el('div', { class: 'specs glass' });
   private side = el('div', { class: 'side glass' });
   private flyBtn = el('button', { class: 'btn primary wide', onclick: () => this.host.fly(this.aircraft, this.pad) }, 'Fly');
+  private resumeBtn = el('button', { class: 'btn wide', onclick: () => this.host.resume() }, 'Resume flight');
+  /** A flight is in progress behind the menu; picking anything else replaces it. */
+  private resumable = false;
 
   constructor(private root: HTMLElement, private host: MenuHost) {
     this.aircraft = AIRCRAFT[host.settings.aircraft] ? host.settings.aircraft : 'medium';
@@ -89,6 +108,18 @@ export class Menu {
         host.saveSettings();
       });
       return el('label', { class: 'field' }, el('span', {}, label), input, val);
+    };
+
+    const select = (label: string, options: [string, string][], value: string, onChange: (v: string) => void) => {
+      const sel = el('select', { 'aria-label': label });
+      for (const [v, text] of options) {
+        const o = el('option', { value: v }, text);
+        if (v === value) o.selected = true;
+        sel.append(o);
+      }
+      sel.addEventListener('change', () => onChange(sel.value));
+      sel.addEventListener('keydown', (e) => e.stopPropagation());
+      return sel;
     };
 
     const quality = el('div', { class: 'seg', role: 'group', 'aria-label': 'Graphics quality' });
@@ -118,10 +149,24 @@ export class Menu {
         el('div', { class: 'label section' }, 'World seed'),
         el('div', { class: 'seed' }, seedInput, el('button', { class: 'btn', onclick: () => host.reseed(seedInput.value) }, 'Load'), el('button', { class: 'btn', onclick: () => host.reseed(null) }, 'New')),
         el('div', { class: 'label section' }, 'Options'),
+        el('div', { class: 'field' }, el('span', {}, 'Weather'), select('Weather', [['auto', 'Changing'], ...WEATHER_ORDER.map((id): [string, string] => [id, WEATHER[id].label])], s.weather, (v) => {
+          s.weather = v;
+          host.setWeather(v);
+          host.saveSettings();
+        })),
+        el('div', { class: 'field' }, el('span', {}, 'Time of day'), select('Time of day', TIMES.map(([l, h]): [string, string] => [String(h), l]), String(TIMES.some(([, h]) => h === s.hour) ? s.hour : -1), (v) => {
+          s.hour = Number(v);
+          host.setHour(s.hour);
+          host.saveSettings();
+        })),
+        range('Volume', () => s.volume, (v) => {
+          s.volume = v;
+          host.setVolume(v);
+        }, (v) => `${Math.round(v * 100)} %`),
         el('div', { class: 'field' }, el('span', {}, 'Graphics'), quality),
         el('div', { class: 'field' }, el('span', {}, 'Key bindings'), el('button', { class: 'btn', onclick: () => host.openControls() }, 'Controls…')),
       ),
-      this.flyBtn,
+      el('div', { class: 'go' }, this.resumeBtn, this.flyBtn),
     );
     root.append(this.side, this.specs);
     this.renderAircraft();
@@ -135,14 +180,30 @@ export class Menu {
     return Math.max(0, Math.round((room * fraction) / 10) * 10);
   }
 
-  open(): void {
+  /** Open the menu. With `resumable`, the flight in progress stays until something else is picked. */
+  open(resumable = false): void {
     this.isOpen = true;
     this.pads = this.host.helipads().slice(0, 14);
     if (!this.pad || !this.pads.includes(this.pad)) this.pad = this.pads.find((p) => p.kind === 'ground' && p.rank === 3) ?? this.pads[0] ?? null;
     this.renderPads();
     this.root.classList.add('open');
+    this.setResumable(resumable);
+    if (!resumable) this.host.preview(this.aircraft, this.pad);
+    (resumable ? this.resumeBtn : this.flyBtn).focus({ preventScroll: true });
+  }
+
+  private setResumable(r: boolean): void {
+    this.resumable = r;
+    this.resumeBtn.style.display = r ? '' : 'none';
+    this.resumeBtn.className = r ? 'btn primary wide' : 'btn wide';
+    this.flyBtn.className = r ? 'btn wide' : 'btn primary wide';
+    this.flyBtn.textContent = r ? 'New flight' : 'Fly';
+  }
+
+  /** Show the current choice behind the menu (this ends any flight in progress). */
+  private showPreview(): void {
+    if (this.resumable) this.setResumable(false);
     this.host.preview(this.aircraft, this.pad);
-    this.flyBtn.focus({ preventScroll: true });
   }
 
   close(): void {
@@ -156,7 +217,7 @@ export class Menu {
     this.host.saveSettings();
     this.renderAircraft();
     this.renderSpecs();
-    this.host.preview(this.aircraft, this.pad);
+    this.showPreview();
   }
 
   private renderAircraft(): void {
@@ -177,7 +238,7 @@ export class Menu {
         onclick: () => {
           this.pad = pad;
           this.renderPads();
-          this.host.preview(this.aircraft, this.pad);
+          this.showPreview();
         },
       }, el('span', { class: 'name' }, name), el('span', { class: 'meta num' }, meta));
     const first = this.pads[0];

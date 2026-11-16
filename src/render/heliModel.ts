@@ -23,6 +23,14 @@ export interface HeliModel {
   beacon: THREE.MeshBasicMaterial;
   navLights: THREE.MeshBasicMaterial[];
   landingLight: THREE.SpotLight;
+  /** Per-blade flap hinges (rotation.x is the flap angle, negative = droop). */
+  bladeTilts: THREE.Group[];
+  /** Blade droop at rest, rad. */
+  droop: number;
+  /** Engine exhaust point in body axes, for smoke and fire. */
+  exhaust: THREE.Vector3;
+  /** Painted and metal materials, so a wreck can be scorched. */
+  materials: THREE.MeshStandardMaterial[];
   dispose(): void;
 }
 
@@ -59,6 +67,98 @@ function loft(stations: Station[], paint: THREE.Color, accent: THREE.Color, band
   geo.setIndex(idx);
   geo.computeVertexNormals();
   return geo;
+}
+
+/**
+ * Rotor disc as the eye sees it at speed: faint near the hub, denser toward the
+ * tips where the blades sweep the most area, a thin tip-path ring, and soft
+ * radial streaks so it shimmers as it turns.
+ */
+function blurTexture(radius: number, blades: number): THREE.CanvasTexture {
+  const S = 256, c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const img = g.createImageData(S, S);
+  for (let j = 0; j < S; j++) {
+    for (let i = 0; i < S; i++) {
+      const x = (i + 0.5) / S - 0.5, y = (j + 0.5) / S - 0.5;
+      const r = Math.hypot(x, y) * 2;
+      if (r > 1) continue;
+      const a = Math.atan2(y, x);
+      const body = 0.35 + 0.65 * Math.pow(r, 1.3);
+      const tip = Math.exp(-Math.pow((r - 0.97) / 0.018, 2));
+      const streak = 0.85 + 0.15 * Math.sin(a * blades * 2 + r * 9);
+      const alpha = Math.min(1, (body * streak * (r > 0.05 ? 1 : 0) + tip * 0.9) * (1 - Math.pow(r, 30)));
+      const k = (j * S + i) * 4;
+      const shade = 26 + 40 * tip;
+      img.data[k] = shade; img.data[k + 1] = shade + 2; img.data[k + 2] = shade + 4; img.data[k + 3] = alpha * 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  void radius;
+  return t;
+}
+
+/** A static picture for a cockpit display: an attitude display or a moving map. */
+function displayTexture(kind: 'pfd' | 'map'): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#05080b';
+  g.fillRect(0, 0, 128, 128);
+  if (kind === 'pfd') {
+    g.fillStyle = '#1f5f9e';
+    g.fillRect(10, 10, 108, 54);
+    g.fillStyle = '#6b4a24';
+    g.fillRect(10, 64, 108, 54);
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(10, 64);
+    g.lineTo(118, 64);
+    for (const y of [44, 84]) {
+      g.moveTo(50, y);
+      g.lineTo(78, y);
+    }
+    g.stroke();
+    g.strokeStyle = '#ffd60a';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(34, 64);
+    g.lineTo(56, 64);
+    g.moveTo(72, 64);
+    g.lineTo(94, 64);
+    g.stroke();
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect(10, 10, 22, 108);
+    g.fillRect(96, 10, 22, 108);
+  } else {
+    g.strokeStyle = '#1d6b3a';
+    g.lineWidth = 1;
+    for (let k = 0; k < 6; k++) {
+      g.beginPath();
+      g.arc(64, 110, 18 + k * 18, Math.PI, 2 * Math.PI);
+      g.stroke();
+    }
+    g.strokeStyle = '#64d2ff';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(20, 100);
+    g.bezierCurveTo(40, 70, 70, 80, 110, 20);
+    g.stroke();
+    g.fillStyle = '#ffffff';
+    g.beginPath();
+    g.moveTo(64, 98);
+    g.lineTo(58, 112);
+    g.lineTo(70, 112);
+    g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
 
 /** Build the procedural model for one aircraft. */
@@ -134,6 +234,7 @@ export function buildHeliModel(d: AircraftData): HeliModel {
   add(new THREE.CylinderGeometry(Math.max(0.22, R * 0.045), Math.max(0.22, R * 0.045), 0.2, 12), dark, rotor);
   const bladeGeo = keep(new THREE.BoxGeometry(d.rotor.chord, 0.045, R * 0.95));
   const bladeMat = keep(new THREE.MeshStandardMaterial({ color: 0x1c1d1f, roughness: 0.7, metalness: 0.1 }));
+  const bladeTilts: THREE.Group[] = [];
   for (let i = 0; i < d.rotor.blades; i++) {
     const arm = new THREE.Group();
     arm.rotation.y = (i / d.rotor.blades) * Math.PI * 2;
@@ -143,11 +244,12 @@ export function buildHeliModel(d: AircraftData): HeliModel {
     const tilt = new THREE.Group();
     tilt.rotation.x = -v.droop;
     tilt.add(b);
+    bladeTilts.push(tilt);
     arm.add(tilt);
     blades.add(arm);
   }
   if (v.flybar) add(new THREE.BoxGeometry(R * 0.5, 0.05, 0.06), dark, blades, 0, 0.28, 0);
-  const blurMat = keep(new THREE.MeshBasicMaterial({ color: 0x1a1c1e, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  const blurMat = keep(new THREE.MeshBasicMaterial({ color: 0xffffff, map: keep(blurTexture(R, d.rotor.blades)), transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
   const rotorBlur = add(new THREE.RingGeometry(R * 0.06, R, 56), blurMat, rotor, 0, 0.03, 0);
   rotorBlur.rotation.x = -Math.PI / 2;
   rotorBlur.castShadow = false;
@@ -236,17 +338,34 @@ export function buildHeliModel(d: AircraftData): HeliModel {
     return m;
   };
   const shieldY = c.shield - eye.y;
-  frame(c.pillar * 2.6, 0.05, 0.5, -eye.x, shieldY - 0.02, -c.reach + 0.1, 0.12);
-  frame(c.pillar * 2.4, 0.42, 0.06, -eye.x, shieldY - 0.24, -c.reach + 0.32);
+  frame(c.pillar * 2.6, 0.05, 0.24, -eye.x, shieldY - 0.02, -c.reach + 0.02, 0.12);
+  frame(c.pillar * 2.4, 0.42, 0.06, -eye.x, shieldY - 0.26, -c.reach + 0.16, -0.25);
   for (const side of [-1, 1]) {
     frame(0.07, 1.25, 0.07, -eye.x + side * c.pillar, shieldY + 0.5, -c.reach - 0.18, -0.42, side * -0.08);
     frame(0.06, 0.05, 1.1, -eye.x + side * (c.pillar + 0.05), shieldY - 0.08, -c.reach + 0.75);
   }
   frame(c.pillar * 2.3, 0.07, 0.09, -eye.x, c.roof - eye.y + 0.15, -c.reach + 0.28);
+  // Glass displays on the panel face: flight display and moving map, alternating.
+  const screens = c.pillar > 0.7 ? 4 : 2;
+  const panelW = c.pillar * 2.4 * 0.86;
+  const sw = panelW / screens - 0.03;
+  const screenGeo = keep(new THREE.PlaneGeometry(sw, Math.min(0.26, sw * 0.95)));
+  const tex = [displayTexture('pfd'), displayTexture('map')].map((t) => keep(t));
+  const screenMats = tex.map((t) => keep(new THREE.MeshBasicMaterial({ map: t, toneMapped: false })));
+  for (let i = 0; i < screens; i++) {
+    const sx = -panelW / 2 + (i + 0.5) * (panelW / screens);
+    const scr = new THREE.Mesh(screenGeo, screenMats[i % 2 === 0 ? 0 : 1]);
+    scr.position.set(sx, eye.y + shieldY - 0.26 + 0.035 * 0.247, eye.z - c.reach + 0.16 + 0.035 * 0.969);
+    scr.rotation.x = -0.25;
+    cockpit.add(scr);
+  }
   if (c.pillar > 0.7) frame(0.06, 1.1, 0.06, -eye.x, shieldY + 0.5, -c.reach - 0.2, -0.42);
 
+  const exhaust = new THREE.Vector3(0, v.mastBase + 0.1, Math.min(1.6, R * 0.12 + 0.5));
+  const materials = [body, paint, accent, dark, glass, bladeMat];
   return {
     root, exterior, shell, cockpit, rotor, blades, rotorBlur, tailRotor, tailBlades, tailBlur, eye, beacon, navLights, landingLight,
+    bladeTilts, droop: v.droop, exhaust, materials,
     dispose() {
       for (const o of owned) o.dispose();
       landingLight.dispose();

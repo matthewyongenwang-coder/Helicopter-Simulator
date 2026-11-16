@@ -3,6 +3,7 @@ import { TERRAIN_LOD } from '../data/graphics';
 import { terrainIndices } from '../world/meshgen';
 import type { JobHandle, WorkerPool } from '../world/workerPool';
 import type { Engine } from './engine';
+import { CLOUD_GLSL } from './clouds';
 import { Water } from './water';
 
 const enum State {
@@ -55,7 +56,10 @@ export class TerrainSystem {
   /** `lag`: how overdue the most overdue LOD split is this frame (1 = on time, Infinity = none waiting). */
   stats = { nodes: 0, shown: 0, triangles: 0, generated: 0, lag: Infinity };
 
-  constructor(private engine: Engine, private pool: WorkerPool) {
+  /** Cloud-shadow strength on the ground (0 none … 1 full), set by the weather each frame. */
+  readonly cloudShadow = { value: 0 };
+
+  constructor(private engine: Engine, private pool: WorkerPool, cloudUniforms?: Record<string, THREE.IUniform>, sunDir?: THREE.IUniform) {
     this.cells = engine.quality.terrainCells;
     this.rootSize = TERRAIN_LOD.leafSize * 2 ** TERRAIN_LOD.levels;
     this.index = new THREE.BufferAttribute(terrainIndices(this.cells), 1);
@@ -64,15 +68,21 @@ export class TerrainSystem {
     this.material.onBeforeCompile = (shader) => {
       shader.uniforms.uOffset = originUniform;
       shader.uniforms.uDeep = { value: Water.DEEP };
+      const shadows = !!cloudUniforms && !!sunDir;
+      if (shadows) Object.assign(shader.uniforms, cloudUniforms, { uSunDir: sunDir, uCloudShadow: this.cloudShadow });
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform vec2 uOffset;\nvarying vec2 vDetail;\nvarying float vHeight;')
+        .replace('#include <common>', '#include <common>\nuniform vec2 uOffset;\nvarying vec2 vDetail;\nvarying float vHeight;\nvarying vec2 vLocalXZ;')
         .replace('#include <color_vertex>', '#include <color_vertex>\nvColor.rgb = pow(vColor.rgb, vec3(2.2));')
         .replace(
           '#include <project_vertex>',
-          '#include <project_vertex>\nvDetail = (modelMatrix * vec4(transformed, 1.0)).xz + uOffset;\nvHeight = transformed.y;',
+          '#include <project_vertex>\nvLocalXZ = (modelMatrix * vec4(transformed, 1.0)).xz;\nvDetail = vLocalXZ + uOffset;\nvHeight = transformed.y;',
         );
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform vec3 uDeep;\nvarying vec2 vDetail;\nvarying float vHeight;\n' + DETAIL_GLSL)
+        .replace(
+          '#include <common>',
+          '#include <common>\nuniform vec3 uDeep;\nvarying vec2 vDetail;\nvarying float vHeight;\nvarying vec2 vLocalXZ;\n' + DETAIL_GLSL +
+            (shadows ? '#define CLOUD_SHADOWS 1\nuniform vec3 uSunDir;\nuniform float uCloudShadow;\n' + CLOUD_GLSL : ''),
+        )
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
@@ -84,6 +94,15 @@ export class TerrainSystem {
             // Under water the sea bed fades into the water colour with depth.
             float depth = max(0.0, -vHeight);
             diffuseColor.rgb = mix(diffuseColor.rgb, uDeep * 0.45, 1.0 - exp(-depth * 0.2));
+            #ifdef CLOUD_SHADOWS
+            if (uCloudShadow > 0.01 && uSunDir.y > 0.05) {
+              // Follow the sun ray up to the middle of the cloud layer.
+              float lift = (uCloudBase + 0.3 * (uCloudTop - uCloudBase) - vHeight) / uSunDir.y;
+              vec2 p = vLocalXZ + uCloudOrigin + uSunDir.xz * lift;
+              float shade = smoothstep(0.0, 0.22, cloudColumn(p));
+              diffuseColor.rgb *= 1.0 - 0.5 * shade * uCloudShadow;
+            }
+            #endif
           }`,
         );
     };

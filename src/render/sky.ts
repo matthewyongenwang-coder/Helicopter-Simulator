@@ -169,6 +169,13 @@ export class Sky {
     this.fog.density = (2.0 / this.engine.quality.viewDistance) * this.haze;
   }
 
+  /** A second dome sharing this one's material, for rendering the sky into an environment map. */
+  envDome(): THREE.Mesh {
+    const m = new THREE.Mesh(this.dome.geometry, this.dome.material);
+    m.frustumCulled = false;
+    return m;
+  }
+
   /** Keep the dome and the sun light centred on the camera. */
   update(focus: THREE.Vector3): void {
     const cam = this.engine.camera;

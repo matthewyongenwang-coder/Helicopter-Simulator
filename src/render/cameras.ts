@@ -71,7 +71,8 @@ export class CameraRig {
       w.x = pos.x + this.v.x;
       w.y = pos.y + this.v.y + sy;
       w.z = pos.z + this.v.z;
-      this.qLook.setFromEuler(this.e.set(this.lookPitch, this.lookYaw, 0));
+      // Eyes rest a little below the horizon so the instruments are in view.
+      this.qLook.setFromEuler(this.e.set(this.lookPitch - 0.1, this.lookYaw, 0));
       cam.quaternion.copy(this.q).multiply(this.qLook);
       this.engine.toScene(w.x + sx, w.y, w.z, cam.position);
       if (cam.fov !== 72) {

@@ -2,7 +2,10 @@ import * as THREE from 'three';
 import { AIRCRAFT, type AircraftData } from '../data/aircraft';
 import type { Action } from '../data/controls';
 import type { QualityName } from '../data/graphics';
+import { AIRCRAFT_VISUAL } from '../data/aircraftVisual';
 import { CameraRig } from '../render/cameras';
+import { Clouds } from '../render/clouds';
+import { Effects } from '../render/effects';
 import { Engine } from '../render/engine';
 import { buildHeliModel, type HeliModel } from '../render/heliModel';
 import { PropSystem } from '../render/propSystem';
@@ -17,6 +20,7 @@ import { helipadsNear, type Helipad } from '../world/structures';
 import { WorkerPool } from '../world/workerPool';
 import { World } from '../world/world';
 import { KeyboardInput } from './input';
+import { WeatherSystem } from './weather';
 import { WorldEnvironment } from './worldEnv';
 
 export interface GameOptions {
@@ -26,6 +30,9 @@ export interface GameOptions {
   quality: QualityName;
   aircraft?: string;
   bindings?: Bindings;
+  weather?: string;
+  /** Start hour, or −1 for the default. */
+  hour?: number;
 }
 
 export interface SpawnPoint {
@@ -57,6 +64,9 @@ export class Game {
   readonly props: PropSystem;
   readonly sky: Sky;
   readonly rig: CameraRig;
+  readonly clouds: Clouds;
+  readonly effects: Effects;
+  readonly weather: WeatherSystem;
   readonly input = new KeyboardInput();
   sim!: Simulation;
   model!: HeliModel;
@@ -89,6 +99,21 @@ export class Game {
   readonly renderQ = new Quat();
   private readonly focus = new THREE.Vector3();
   private padTimer = 0;
+  private readonly tmpV = new THREE.Vector3();
+  private readonly tmpQ = new THREE.Quaternion();
+  private readonly dust = new THREE.Color(0.55, 0.48, 0.36);
+  private dustTimer = 0;
+  private readonly camPrev = { x: 0, y: 0, z: 0 };
+  private readonly camVel = { x: 0, y: 0, z: 0 };
+  private discX = 0;
+  private discZ = 0;
+  private charred = false;
+  private castsShadow = true;
+  private envScene = new THREE.Scene();
+  private pmrem!: THREE.PMREMGenerator;
+  private envTarget: THREE.WebGLRenderTarget | null = null;
+  private envTimer = 0;
+  private cloudDrift = new THREE.Vector2();
 
   constructor(opts: GameOptions) {
     this.hud = opts.hud;
@@ -98,13 +123,17 @@ export class Game {
     this.env = new WorldEnvironment(this.world);
     this.pool = new WorkerPool(opts.seed, Math.max(1, Math.min(this.engine.quality.workers, (navigator.hardwareConcurrency || 4) - 1)));
     this.sky = new Sky(this.engine);
-    this.terrain = new TerrainSystem(this.engine, this.pool);
+    this.clouds = new Clouds(this.engine, this.sky);
+    this.terrain = new TerrainSystem(this.engine, this.pool, this.clouds.enabled ? this.clouds.uniforms : undefined, this.sky.uniforms.uSunDir);
     this.water = new Water(this.engine, this.sky);
     this.props = new PropSystem(this.engine, this.pool, {
       onStructures: (key, cell) => this.env.colliders.add(key, cell.x0, cell.z0, cell.colliders),
       onRemove: (key) => this.env.colliders.remove(key),
     });
     this.rig = new CameraRig(this.engine, (x, z) => this.env.ground(x, z));
+    this.effects = new Effects(this.engine);
+    this.weather = new WeatherSystem(opts.seed, opts.weather ?? 'auto', opts.hour ?? -1);
+    this.setupLighting();
     this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
     this.lastPad = this.findSpawn();
     this.spawn(this.aircraft, this.lastPad);
@@ -157,6 +186,9 @@ export class Game {
     this.input.attach(this.sim, () => this.sim.actions.releaseAll());
     this.model = buildHeliModel(data);
     this.engine.scene.add(this.model.root);
+    this.charred = false;
+    this.castsShadow = true;
+    this.effects.reset();
     this.rig.reset();
     this.flightTime = 0;
     this.padTimer = 0;
@@ -230,6 +262,8 @@ export class Game {
     m.cockpit.visible = cockpit;
 
     const w = this.rig.world;
+    this.updateWeather(live ? dt : this.mode === 'menu' ? dt : 0, w.y);
+    this.updateEffects(live ? dt : 0, dt);
     this.terrain.update(w.x, w.y, w.z);
     const night = 1 - THREE.MathUtils.smoothstep(this.sky.daylight, 0.12, 0.5);
     this.props.update(w.x, w.y, w.z, night, this.sky.fog.density);
@@ -237,6 +271,7 @@ export class Game {
     this.focus.copy(m.root.position);
     this.sky.update(this.focus);
     this.water.update(this.sky.daylight);
+    this.updateEnvironmentMap(dt);
     this.onFrame?.(dt);
     e.render();
     if (this.frames % 6 === 0 && this.hud.classList.contains('on')) this.drawDebug();
@@ -248,10 +283,38 @@ export class Game {
     m.blades.rotation.y = h.rotorAngle;
     m.tailBlades.rotation.x = h.rotorAngle * 4.7;
     const blur = THREE.MathUtils.smoothstep(n, 0.3, 0.8);
-    (m.rotorBlur.material as THREE.MeshBasicMaterial).opacity = (h.rotorOk ? 0.17 : 0) * blur;
+    (m.rotorBlur.material as THREE.MeshBasicMaterial).opacity = (h.rotorOk ? 0.42 : 0) * blur;
+    m.rotorBlur.rotation.z = -h.rotorAngle * 0.03;
     (m.tailBlur.material as THREE.MeshBasicMaterial).opacity = (h.tailRotorOk ? 0.2 : 0) * blur;
     m.blades.visible = n < 0.9 && h.rotorOk;
     m.tailBlades.visible = n < 0.9 && h.tailRotorOk;
+    // Blades droop at rest and cone up under load as centrifugal force takes over.
+    const spin = THREE.MathUtils.smoothstep(n, 0.15, 0.75);
+    const load = h.tel.mass > 0 ? Math.min(1.6, h.tel.thrust / (h.tel.mass * 9.81)) : 0;
+    const cone = (0.02 + 0.04 * load) / Math.max(0.6, n * n);
+    for (const tilt of m.bladeTilts) tilt.rotation.x = -m.droop * (1 - spin) + Math.min(0.12, cone) * spin;
+    // The disc leads the fuselage: it tilts toward the commanded rate before the airframe follows.
+    const lead = 0.11 * spin;
+    const k = Math.min(1, dt * 14);
+    this.discX += (THREE.MathUtils.clamp(h.cmd.wx * lead, -0.12, 0.12) - this.discX) * k;
+    this.discZ += (THREE.MathUtils.clamp(h.cmd.wz * lead, -0.12, 0.12) - this.discZ) * k;
+    m.rotor.rotation.set(this.discX, 0, this.discZ);
+    // The sun's half-degree disc blurs a small aircraft's shadow away a few hundred metres up.
+    const casts = h.tel.radarAlt < 350;
+    if (casts !== this.castsShadow) {
+      this.castsShadow = casts;
+      m.root.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh && o.parent !== m.cockpit) o.castShadow = casts && !(o === m.rotorBlur || o === m.tailBlur);
+      });
+    }
+    if (h.destroyed && !this.charred) {
+      this.charred = true;
+      for (const mat of m.materials) {
+        mat.color.multiplyScalar(0.16);
+        mat.roughness = 1;
+        mat.metalness = 0;
+      }
+    }
     // Lights: steady nav lights and a flashing beacon whenever the aircraft has power.
     const powered = h.engine !== 'off' || n > 0.05;
     const t = this.engine.timeUniform.value;
@@ -259,6 +322,119 @@ export class Game {
     m.navLights.forEach((l, i) => l.color.setHex(NAV_COLORS[i]).multiplyScalar(level));
     m.beacon.color.setHex(0xff2010).multiplyScalar(powered && t % 1.1 < 0.12 ? 4 : 0.05);
     m.landingLight.intensity += ((this.landingLightOn && powered ? 900 : 0) - m.landingLight.intensity) * Math.min(1, dt * 8);
+  }
+
+  /** Sun shadows around the aircraft, and an environment map of the sky for reflections. */
+  private setupLighting(): void {
+    const q = this.engine.quality;
+    const sun = this.sky.sun;
+    sun.castShadow = q.shadows;
+    if (q.shadows) {
+      sun.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
+      const cam = sun.shadow.camera as THREE.OrthographicCamera;
+      const r = q.shadowMapSize >= 4096 ? 90 : 70;
+      cam.left = -r; cam.right = r; cam.top = r; cam.bottom = -r;
+      cam.near = 1;
+      cam.far = 1000;
+      cam.updateProjectionMatrix();
+      sun.shadow.bias = -0.0004;
+      sun.shadow.normalBias = 0.04;
+    }
+    this.envScene.add(this.sky.envDome());
+    this.pmrem = new THREE.PMREMGenerator(this.engine.renderer);
+  }
+
+  /** Re-render the sky into the environment map every couple of seconds as the light changes. */
+  private updateEnvironmentMap(dt: number): void {
+    this.envTimer -= dt;
+    if (this.envTimer > 0 && this.envTarget) return;
+    this.envTimer = 2;
+    const rt = this.pmrem.fromScene(this.envScene, 0, 0.1, 100);
+    this.envTarget?.dispose();
+    this.envTarget = rt;
+    this.engine.scene.environment = rt.texture;
+    this.engine.scene.environmentIntensity = 0.35 + 0.45 * this.sky.daylight;
+  }
+
+  /** Clock, weather and wind: drive the sky, clouds, water and the flight model's air. */
+  private updateWeather(dt: number, camY: number): void {
+    const W = this.weather, h = this.sim.heli, sky = this.sky;
+    W.update(dt, this.world, h.pos.x, h.pos.z, h.tel.radarAlt);
+    const cur = W.cur;
+    this.env.wind_.x = W.windX;
+    this.env.wind_.z = W.windZ;
+    this.env.wind_.gust = cur.gust;
+    this.env.turbulence = W.areaTurbulence;
+    const cu = this.clouds.uniforms;
+    cu.uCover.value = cur.cover;
+    cu.uCloudBase.value = cur.cloudBase;
+    cu.uCloudTop.value = cur.cloudBase + 380 + 900 * cur.cover;
+    // The cloud field drifts with the wind (faster aloft).
+    this.cloudDrift.x -= W.windX * 1.6 * dt;
+    this.cloudDrift.y -= W.windZ * 1.6 * dt;
+    cu.uCloudWind.value.copy(this.cloudDrift);
+    sky.overcast = cur.overcast;
+    sky.haze = cur.haze * (1 + 28 * this.clouds.inside(camY));
+    sky.setTime(W.hour);
+    sky.hemi.intensity += W.flash * 2.2;
+    sky.sun.intensity *= 1 - 0.35 * cur.cover * (1 - cur.overcast);
+    this.terrain.cloudShadow.value = (1 - cur.overcast) * Math.min(1, cur.cover * 2.5);
+    this.clouds.update(sky.daylight, sky.fog.density, cur.lightning > 0 ? cur.precip : 0, W.flash);
+    this.water.setWind(W.windX, W.windZ, cur.chop * (0.7 + W.windSpeed / 14));
+  }
+
+  /** Downwash, smoke, fire and precipitation, positioned from this frame's pose. */
+  private updateEffects(simDt: number, dt: number): void {
+    const h = this.sim.heli, t = h.tel, m = this.model, d = this.aircraft;
+    const q = this.tmpQ.set(this.renderQ.x, this.renderQ.y, this.renderQ.z, this.renderQ.w);
+    const p = this.renderPos;
+    const hub = this.tmpV.set(0, d.rotor.hubHeight, 0).applyQuaternion(q);
+    const hubX = p.x + hub.x, hubY = p.y + hub.y, hubZ = p.z + hub.z;
+    const ex = this.tmpV.copy(m.exhaust).applyQuaternion(q);
+    const exX = p.x + ex.x, exY = p.y + ex.y, exZ = p.z + ex.z;
+    const gearY = Math.min(...d.gear.points.map((g) => g[1]));
+    const groundY = t.surfaceKind === 1 ? 0 : p.y + gearY - t.radarAlt;
+    this.dustTimer -= dt;
+    if (this.dustTimer <= 0) {
+      this.dustTimer = 0.5;
+      const s = this.world.surfaceAt(p.x, p.z);
+      this.dust.setRGB(s.r * 1.1, s.g * 1.0, s.b * 0.95).lerp(new THREE.Color(0.62, 0.55, 0.43), 0.45);
+      if (this.weather.snowing) this.dust.lerp(new THREE.Color(0.95, 0.96, 1), 0.8);
+    }
+    const w = this.rig.world;
+    if (dt > 0) {
+      const k = Math.min(1, dt * 10);
+      this.camVel.x += ((w.x - this.camPrev.x) / dt - this.camVel.x) * k;
+      this.camVel.y += ((w.y - this.camPrev.y) / dt - this.camVel.y) * k;
+      this.camVel.z += ((w.z - this.camPrev.z) / dt - this.camVel.z) * k;
+    }
+    this.camPrev.x = w.x; this.camPrev.y = w.y; this.camPrev.z = w.z;
+    const W = this.weather;
+    this.effects.update({
+      dt: simDt,
+      hubX, hubY, hubZ,
+      rotorRadius: d.rotor.diameter / 2,
+      groundY,
+      surface: t.surfaceKind,
+      wash: h.rotorOk ? Math.min(1.3, t.thrust / (t.mass * 9.81)) * Math.min(1, h.rotorN) : 0,
+      dust: this.dust,
+      exX, exY, exZ,
+      velX: h.vel.x, velY: h.vel.y, velZ: h.vel.z,
+      health: h.health,
+      destroyed: h.destroyed,
+      windX: W.windX, windZ: W.windZ,
+      precip: W.cur.precip,
+      snow: W.snowing,
+      camVX: Math.abs(this.camVel.x) > 400 ? 0 : this.camVel.x,
+      camVY: Math.abs(this.camVel.y) > 400 ? 0 : this.camVel.y,
+      camVZ: Math.abs(this.camVel.z) > 400 ? 0 : this.camVel.z,
+      daylight: this.sky.daylight,
+    });
+  }
+
+  /** The visual definition of the current aircraft (for audio). */
+  get visual() {
+    return AIRCRAFT_VISUAL[this.aircraft.id] ?? AIRCRAFT_VISUAL.medium;
   }
 
   /** Remember the helipad the aircraft is resting on, for respawning. */

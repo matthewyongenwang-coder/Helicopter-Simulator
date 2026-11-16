@@ -126,13 +126,134 @@ try {
     console.log(`shot ${name}: ${fps.toFixed(0)} fps, ${st.shown} nodes, ${(st.triangles / 1000).toFixed(0)}k tris, y=${st.y.toFixed(0)}`);
     check(fps > 25, `frame rate at "${name}"`, `${fps.toFixed(0)} fps`);
   }
+  // Milestone 5: HUD, weather, downwash, damage, cockpit, controls overlay, pause.
+  if (args.m5 !== '0') {
+    const settle = async (ms = 600) => {
+      await page.waitForTimeout(ms);
+      await page.waitForFunction(() => window.__game.ready && window.__game.terrain.settled && window.__game.props.settled, null, { timeout: 90000 });
+    };
+    const hudText = await page.$eval('#ui', (n) => n.textContent);
+    check(/IAS/.test(hudText) && /ALT/.test(hudText) && /Seed/.test(hudText), 'HUD shows airspeed, altitude and the seed');
+    // Find open water and open grass near the start for downwash.
+    const spots = await page.evaluate(() => {
+      const g = window.__game, p = g.sim.heli.pos, w = g.world;
+      let water = null, land = null;
+      for (let r = 300; r < 15000 && (!water || !land); r += 150) {
+        for (let k = 0; k < 24; k++) {
+          const a = (k / 24) * Math.PI * 2, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+          const h = w.height(x, z);
+          if (!water && h < -8 && w.height(x + 60, z) < -8 && w.height(x - 60, z) < -8) water = { x, z };
+          if (!land && h > 4 && w.density(x, z) < 0.01 && Math.abs(w.height(x + 20, z) - h) < 1 && Math.abs(w.height(x, z + 20) - h) < 1) land = { x, z };
+        }
+      }
+      return { water, land };
+    });
+    const hover = async (name, spot, alt, hour, weather) => {
+      await page.evaluate(([x, z, alt, hour, weather]) => {
+        const g = window.__game;
+        g.weather.setMode(weather, true);
+        g.weather.hour = hour;
+        g.setPose(x, z, alt, 30);
+      }, [spot.x, spot.z, alt, hour, weather]);
+      await settle();
+      await page.keyboard.press('KeyX');
+      await page.waitForTimeout(2500);
+      await page.screenshot({ path: join(out, `${name}.png`) });
+      const fps = await measureFps(1.5);
+      check(fps > 25, `frame rate at "${name}"`, `${fps.toFixed(0)} fps`);
+      await page.keyboard.press('KeyX');
+      await page.waitForTimeout(200);
+    };
+    if (spots.water) await hover('wash_water', spots.water, 6, 11, 'clear');
+    if (spots.land) await hover('wash_land', spots.land, 5, 16, 'fair');
+    const base = spots.land ?? spots.water;
+    if (base) {
+      const auto = await page.evaluate(() => window.__game.sim.heli.autohover.engaged);
+      check(auto === false, 'autohover toggles off again with X');
+      await hover('storm', base, 160, 15, 'storm');
+      const rain = await page.evaluate(() => window.__game.effects.rain.visible);
+      check(rain, 'rain falls in the storm');
+      await hover('snow', base, 90, 11, 'snow');
+      await hover('fog', base, 60, 9, 'fog');
+      await hover('clouds_dusk', base, 700, 18.4, 'fair');
+      await hover('above_clouds', base, 2600, 13, 'overcast');
+      // Wind and area turbulence reach the flight model.
+      await page.evaluate(() => window.__game.weather.setMode('storm', true));
+      await page.waitForTimeout(300);
+      const air = await page.evaluate(() => ({ wind: Math.hypot(window.__game.env.wind_.x, window.__game.env.wind_.z), gust: window.__game.env.wind_.gust }));
+      check(air.wind > 3 && air.gust > 3, 'storm wind and gusts reach the flight model', `${air.wind.toFixed(1)} m/s, gust ${air.gust}`);
+      await page.evaluate(() => window.__game.weather.setMode('fair', true));
+      // Damage: smoke at low health, then fire, then destroyed.
+      await page.evaluate(([x, z]) => {
+        const g = window.__game;
+        g.weather.hour = 12;
+        g.setPose(x, z, 120, 0);
+      }, [base.x, base.z]);
+      await settle();
+      await page.evaluate(() => (window.__game.sim.heli.health = 0.25));
+      await page.waitForTimeout(2500);
+      await page.screenshot({ path: join(out, 'damaged.png') });
+      await page.evaluate(() => window.__game.sim.heli.destroy('Test'));
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: join(out, 'destroyed.png') });
+      const banner = await page.$eval('.banner', (n) => getComputedStyle(n).display !== 'none');
+      check(banner, 'crash banner offers a respawn');
+      await page.keyboard.press('KeyR');
+      await settle();
+      const back = await page.evaluate(() => ({ destroyed: window.__game.sim.heli.destroyed, onGround: window.__game.sim.heli.tel.onGround }));
+      check(!back.destroyed, 'R respawns at the last helipad', JSON.stringify(back));
+    }
+    // Cockpit view.
+    await page.keyboard.press('KeyC');
+    await page.waitForTimeout(800);
+    await page.screenshot({ path: join(out, 'cockpit.png') });
+    const cam = await page.evaluate(() => window.__game.rig.mode);
+    check(cam === 'cockpit', 'C switches to the cockpit camera');
+    await page.keyboard.press('KeyC');
+    // Controls overlay.
+    await page.keyboard.press('KeyH');
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: join(out, 'controls.png') });
+    const ov = await page.evaluate(() => ({ open: document.querySelector('.scrim').classList.contains('open'), paused: window.__game.paused, rows: document.querySelectorAll('.bind').length }));
+    check(ov.open && ov.paused && ov.rows >= 18, 'H opens the controls overlay and pauses', JSON.stringify(ov));
+    // Rebind collective up to K, check it works, then restore.
+    await page.click('.bind button');
+    await page.keyboard.press('KeyK');
+    const rebound = await page.evaluate(() => window.__settings.bindings.collectiveUp.join(','));
+    check(rebound === 'KeyK', 'controls can be rebound', rebound);
+    await page.click('.sheet .foot .btn:not(.primary)');
+    const restored = await page.evaluate(() => window.__settings.bindings.collectiveUp.join(','));
+    check(restored === 'Space', 'reset restores the default bindings', restored);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const closed = await page.evaluate(() => !document.querySelector('.scrim').classList.contains('open') && !window.__game.paused);
+    check(closed, 'Escape closes the overlay and resumes');
+    // Minimap zoom.
+    const z0 = await page.evaluate(() => window.__hud.minimap.zoom);
+    await page.keyboard.press('KeyM');
+    await page.waitForTimeout(200);
+    const z1 = await page.evaluate(() => window.__hud.minimap.zoom);
+    check(z1 !== z0, 'M changes the minimap zoom');
+    // Pause menu keeps the flight.
+    await page.evaluate(() => (window.__game.flightTime = Math.max(window.__game.flightTime, 1)));
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const paused = await page.evaluate(() => ({ menu: document.getElementById('menu').classList.contains('open'), resume: getComputedStyle(document.querySelector('#menu .go .btn')).display !== 'none' }));
+    check(paused.menu && paused.resume, 'Escape opens the menu with Resume');
+    await page.screenshot({ path: join(out, 'pause.png') });
+    await page.click('#menu .go .btn.primary');
+    await page.waitForTimeout(300);
+    const resumed = await page.evaluate(() => window.__game.mode);
+    check(resumed === 'fly', 'Resume returns to the flight');
+  }
+
   // Settlements, bridges and night lighting.
   if (args.world !== '0') {
     const targets = await page.evaluate(() => window.__game.debugTargets());
     const goto = async (name, x, z, alt, hdg, hour) => {
       await page.evaluate(([x, z, alt, hdg, hour]) => {
         const g = window.__game;
-        g.sky.setTime(hour);
+        g.weather.hour = hour;
         g.setPose(x, z, alt, hdg);
       }, [x, z, alt, hdg, hour]);
       await page.waitForTimeout(500);
@@ -160,7 +281,7 @@ try {
       if (pad) {
         await page.evaluate((pad) => {
           const g = window.__game;
-          g.sky.setTime(15);
+          g.weather.hour = 15;
           g.spawn(g.aircraft, { x: pad.x, z: pad.z, y: pad.y, heading: pad.heading });
         }, pad);
         await page.waitForFunction(() => window.__game.ready && window.__game.props.settled, null, { timeout: 90000 });
@@ -181,7 +302,7 @@ try {
       const rad = ((b.heading + 90) * Math.PI) / 180;
       await goto('bridge', b.x + Math.sin(rad) * 260, b.z - Math.cos(rad) * 260, 70, b.heading - 90, 14);
     }
-    await page.evaluate(() => window.__game.sky.setTime(10));
+    await page.evaluate(() => (window.__game.weather.hour = 10));
   }
 
   // Cruise: 45 s at 85 m/s (165 kt, 3.8 km), low, watching that terrain streams in ahead of the aircraft.

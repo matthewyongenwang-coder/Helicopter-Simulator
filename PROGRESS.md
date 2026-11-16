@@ -8,7 +8,7 @@
 | 2 | Terrain streaming, water, biomes, seed | **Done** |
 | 3 | Settlements, roads, bridges, forests, props | **Done** |
 | 4 | Six aircraft, models, spawn menu | **Done** |
-| 5 | HUD, cameras, audio, weather, day/night, damage, polish | Not started |
+| 5 | HUD, cameras, audio, weather, day/night, damage, polish | **Done** |
 | 6 | Performance pass, playtest, README | Not started |
 
 ## Milestone 1
@@ -114,6 +114,53 @@ Verified (`tests/physics/aircraft.test.ts`, 11 tests, and `npm run e2e`):
 | Each starts and lifts off only in the green | Pass for all six, including empty with Space held through the start |
 | Menu | Six aircraft, spec table, helipads and free flight, seed shown, Fly starts the chosen aircraft |
 
+## Milestone 5
+
+- `src/ui/hud.ts`: heading tape, attitude indicator (pitch ladder, bank scale, yaw-rate bar),
+  airspeed and ground speed, barometric and radar altitude, vertical speed, rotor RPM with the
+  green band, torque with the 100 % mark, collective, fuel, engine state, airframe health,
+  autohover and warning pills, context hints that follow the start sequence, crash banner.
+- `src/ui/minimap.ts`: north-up moving map. Terrain tiles are hill-shaded in the chunk workers
+  (`buildMapTile`) and cached at three zoom levels; roads, towns, helipads, the respawn point and
+  a wind arrow are drawn on top.
+- `src/ui/overlays.ts`: controls overlay with every binding grouped, click-to-rebind, reset to
+  defaults. Opening it pauses the flight. Esc in flight opens the menu with Resume.
+- `src/game/weather.ts`, `src/data/weather.ts`: seven presets (clear, fair, overcast, rain, storm,
+  fog, snow), blended over 90 s in "changing" mode; wind that veers; lightning with thunder
+  delayed by distance; a day clock (2 real minutes per hour). Wind and gusts feed the flight
+  model, plus **turbulence that varies by area**: mechanical turbulence over rough terrain and
+  city blocks (scaled by wind), daytime thermals over land, calmer air over water, all fading
+  with height above the ground.
+- `src/render/clouds.ts`: a ray-marched cumulus layer (flat bases, noise-driven tops) seen from
+  below, inside and above, lit by the sun with a self-shadowing term, drifting with the wind.
+  The terrain shader casts the same cloud field's shadows on the ground.
+- `src/render/effects.ts`: rotor downwash (dust coloured by the ground under the aircraft,
+  spray over water, little over paving), engine smoke under 60 % health and fire under 30 %,
+  explosion and burning wreck, rain streaks stretched by the camera's own motion, snow.
+- Lighting: sun shadows around the aircraft (2048–4096 map), sky environment map regenerated
+  every 2 s for reflections on the aircraft, wreck scorching.
+- Rotor: blades droop at rest and cone up with thrust/weight as RPM rises; the disc leads the
+  fuselage toward the commanded rate (flapping); textured blur disc with a tip-path ring.
+- Cockpit: glass displays on the panel, eyes resting slightly below the horizon.
+- `src/audio/audio.ts`: Web Audio synthesis. Blade slap is noise amplitude-modulated by a pulse
+  train at the blade-passing frequency of each aircraft (its rotor speed and blade count), louder
+  with blade load, airspeed and descent through the wake. Turbine whine follows a lagged gas
+  generator speed; gearbox rumble; wind; rain; cockpit muffling; low-rotor horn; master caution;
+  autohover tones; impacts; explosion; thunder.
+
+Verified (`tests/world/weather.test.ts`, 9 tests, and `npm run e2e`):
+
+| Check | Result |
+|---|---|
+| Weather is deterministic per seed and blends without jumps | Pass; cover never moves more than 3 % in a second |
+| Storms make lightning, clear skies do not | Pass |
+| Turbulence by area | Mountains over 3× plains, city over 2× plains, water calmest, fades to under 20 % by 600 m |
+| Thermals | Present over sunny land by day, zero at night |
+| Storm wind reaches the flight model | 13–17 m/s with 6 m/s gusts in the environment the sim reads |
+| HUD, crash banner, respawn, cockpit camera, controls overlay, rebinding, reset, minimap zoom, pause and resume | All pass in the browser |
+| Frame rate with clouds, shadows, particles, rain | 60 fps in every shot, no console errors |
+| Memory | Same trip twice costs the same GPU geometry count (304 and 304) |
+
 ## Decisions
 
 - **Settlement kinds are capped by peak density**, so only cities reach tower density and
@@ -149,6 +196,12 @@ Verified (`tests/physics/aircraft.test.ts`, 11 tests, and `npm run e2e`):
   rotor out of its own wake, and keeps some airspeed on in a fast vertical descent.
 - **Drag area is derived from the listed top speed.** Climb rate, ceiling, endurance and range
   for the menu are computed from the same model, not typed in.
+- **The weather drives the clock and the sky.** Tests that need a time of day set
+  `weather.hour`, not the sky directly.
+- **Aircraft shadow only below 350 m.** The sun's disc blurs a small aircraft's shadow away above
+  that, and it keeps the shadow map focused where it matters, on landing.
+- **Area turbulence goes through the same gust field** as the weather's gusts, so it is felt as
+  real disturbances in the 6-DOF model, and autohover fights it like any other gust.
 - **"Loses authority at low speed"** is implemented two ways: tail-rotor thrust scales with
   rotor RPM², and it is less effective in the hover than in forward flight.
 
@@ -164,3 +217,6 @@ Verified (`tests/physics/aircraft.test.ts`, 11 tests, and `npm run e2e`):
   Real rotors add flapback; that is left out to keep attitude purely pilot-driven.
 - Climb rates from the model (14–23 m/s) are higher than real aircraft of these classes.
 - The GateGuard hook blocks the first write of every new file until its facts are stated.
+- Cloud edges show some fine grain at grazing angles (a short ray march without temporal
+  accumulation).
+- Rain and snow do not yet stop under bridges or roofs.

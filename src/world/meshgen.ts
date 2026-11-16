@@ -126,3 +126,48 @@ export function buildTerrainMesh(world: World, x0: number, z0: number, size: num
   }
   return { positions, normals, colors, minY: minY - drop, maxY };
 }
+
+/**
+ * Minimap tile: `px`×`px` RGBA pixels of [x0, x0+size] × [z0, z0+size], north (−z) up.
+ * Biome colours with hill shading from the north-west, water shaded by depth,
+ * and forest darkened by tree cover.
+ */
+export function buildMapTile(world: World, x0: number, z0: number, size: number, px: number): Uint8ClampedArray {
+  const step = size / px;
+  const pad = px + 1;
+  const heights = new Float32Array(pad * pad);
+  const samples = new Array(pad * pad);
+  const minWl = Math.max(48, step * 2);
+  const s = newSample();
+  for (let j = 0; j < pad; j++) {
+    for (let i = 0; i < pad; i++) {
+      const k = j * pad + i;
+      heights[k] = world.sample(x0 + (i + 0.5) * step, z0 + (j + 0.5) * step, minWl, s);
+      samples[k] = { cont: s.cont, mountain: s.mountain, river: s.river, valley: s.valley, lake: s.lake, h: s.h };
+    }
+  }
+  const out = new Uint8ClampedArray(px * px * 4);
+  const surf = newSurface();
+  for (let j = 0; j < px; j++) {
+    for (let i = 0; i < px; i++) {
+      const k = j * pad + i;
+      const h = heights[k];
+      const dx = heights[k + 1] - h, dz = heights[k + pad] - h;
+      const slope = Math.hypot(dx, dz) / step;
+      let r: number, g: number, b: number;
+      if (h < 0) {
+        const d = Math.min(1, -h / 60);
+        r = 0.16 - 0.1 * d; g = 0.36 - 0.18 * d; b = 0.5 - 0.16 * d;
+      } else {
+        world.classify(x0 + (i + 0.5) * step, z0 + (j + 0.5) * step, h, slope, samples[k], surf);
+        // Light from the north-west: brighter on slopes that face it.
+        const shade = Math.max(0.55, Math.min(1.35, 1 + ((dx + dz) / step) * 1.6));
+        const tree = 1 - 0.28 * surf.trees;
+        r = surf.r * shade * tree; g = surf.g * shade * tree; b = surf.b * shade * tree;
+      }
+      const o = (j * px + i) * 4;
+      out[o] = r * 255; out[o + 1] = g * 255; out[o + 2] = b * 255; out[o + 3] = 255;
+    }
+  }
+  return out;
+}
