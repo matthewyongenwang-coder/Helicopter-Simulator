@@ -45,6 +45,41 @@ try {
   await page.waitForFunction(() => window.__game && window.__game.ready, null, { timeout: 90000 });
   check(true, 'game loads and first terrain is ready', `${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
+  // Spawn menu: every aircraft is listed with its specs, selecting one shows its model, Fly starts the flight.
+  if (args.menu !== '0') {
+    await page.waitForSelector('#menu.open');
+    const rows = await page.$$eval('#menu [aria-label="Aircraft"] .row', (r) => r.map((n) => n.textContent));
+    check(rows.length === 6, 'menu lists six aircraft', rows.join(' | '));
+    const table = await page.$eval('#menu .specs table', (t) => ({ rows: t.querySelectorAll('tbody tr').length, cols: t.querySelectorAll('thead th').length }));
+    check(table.rows >= 12 && table.cols === 7, 'spec table compares all six', `${table.rows} rows x ${table.cols - 1} aircraft`);
+    const pads = await page.$$eval('#menu [aria-label="Start location"] .row', (r) => r.map((n) => n.textContent));
+    check(pads.length >= 3 && pads.some((p) => p.includes('Free flight')), 'menu offers helipads and free flight', `${pads.length} choices`);
+    const seedShown = await page.$eval('#menu .seed input', (i) => i.value);
+    check(/^[2-9A-Z]{4}-[2-9A-Z]{3}$/.test(seedShown), 'seed is shown on screen', seedShown);
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: join(out, 'menu.png') });
+    const count = (await page.$$('#menu [aria-label="Aircraft"] .row')).length;
+    for (let i = 0; i < count; i++) {
+      await (await page.$$('#menu [aria-label="Aircraft"] .row'))[i].click();
+      await page.waitForFunction(() => window.__game.ready, null, { timeout: 60000 });
+      await page.waitForTimeout(350);
+      const id = await page.evaluate(() => window.__game.aircraft.id);
+      await page.evaluate(() => (document.getElementById('menu').style.visibility = 'hidden'));
+      await page.screenshot({ path: join(out, `model_${id}.png`) });
+      await page.evaluate(() => (document.getElementById('menu').style.visibility = ''));
+    }
+    await (await page.$$('#menu [aria-label="Aircraft"] .row'))[2].click();
+    await page.click('#menu .btn.primary');
+    await page.waitForFunction(() => window.__game.mode === 'fly' && window.__game.ready, null, { timeout: 60000 });
+    const flying = await page.evaluate(() => ({ menu: document.getElementById('menu').classList.contains('open'), id: window.__game.aircraft.id }));
+    check(!flying.menu && flying.id === 'medium', 'Fly closes the menu and starts in the chosen aircraft', JSON.stringify(flying));
+  } else {
+    await page.evaluate(() => {
+      window.__menu.close();
+      window.__game.setMode('fly');
+    });
+  }
+
   const info = await page.evaluate(() => {
     const g = window.__game;
     const gl = g.engine.renderer.getContext();

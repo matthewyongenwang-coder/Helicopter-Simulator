@@ -6,8 +6,8 @@
 |---|---|---|
 | 1 | Architecture + headless flight model, controls, autohover, physics tests | **Done** |
 | 2 | Terrain streaming, water, biomes, seed | **Done** |
-| 3 | Settlements, roads, bridges, forests, props | In progress |
-| 4 | Six aircraft, models, spawn menu | Not started (spec data for all six already written) |
+| 3 | Settlements, roads, bridges, forests, props | **Done** |
+| 4 | Six aircraft, models, spawn menu | **Done** |
 | 5 | HUD, cameras, audio, weather, day/night, damage, polish | Not started |
 | 6 | Performance pass, playtest, README | Not started |
 
@@ -91,6 +91,29 @@ Verified (`tests/world/settlements.test.ts`, 18 tests, and `npm run e2e`):
 | Browser | City, town, bridge, dusk and night views all 60 fps, 180–260 draw calls, no console errors; the aircraft rests on the city heliport |
 | Memory | The same 6 km round trip twice ends on the same GPU geometry count (277 and 277) |
 
+## Milestone 4
+
+- `src/data/aircraft.ts`: six aircraft (Wasp scout, Mule utility, Nightjar medium, Atlas heavy-lift,
+  Shrike attack, Petrel rescue). `src/data/aircraftVisual.ts`: how each one looks (lofted fuselage
+  stations, pods, slabs, tail, rotor, gear, cockpit frame, eye point).
+- `src/render/heliModel.ts`: builds each model from that data; rotor and tail-rotor blades with
+  blur discs, nav lights, beacon, landing light, cockpit frame for the cockpit camera.
+- `src/ui/menu.ts`: spawn menu with the aircraft list, a spec table comparing all six (15 rows,
+  climb, ceiling and range computed from the flight model), start location (helipads near the
+  start, or free flight), fuel and payload sliders, seed entry, graphics quality, controls.
+- `src/render/cameras.ts`: chase, cockpit and menu orbit, with free look on any of them.
+- `src/game/settings.ts`: settings and bindings saved to local storage.
+
+Verified (`tests/physics/aircraft.test.ts`, 11 tests, and `npm run e2e`):
+
+| Check | Result |
+|---|---|
+| Same inputs, different results | Pitch, roll, yaw, climb, fuel burn and damage all distinct across the six |
+| Heavy-lift sluggish, scout nimble | Scout pitches over 3.5× and rolls over 3.5× as far as the heavy for the same key press; a quarter-second tap banks the scout over 15°, the heavy under 5° |
+| Autohover on all, faster on light ones | Every aircraft settles from a 30° bank and 8 m/s drift; scout fastest, heavy slowest |
+| Each starts and lifts off only in the green | Pass for all six, including empty with Space held through the start |
+| Menu | Six aircraft, spec table, helipads and free flight, seed shown, Fly starts the chosen aircraft |
+
 ## Decisions
 
 - **Settlement kinds are capped by peak density**, so only cities reach tower density and
@@ -133,9 +156,6 @@ Verified (`tests/world/settlements.test.ts`, 18 tests, and `npm run e2e`):
 
 - The 2 s autohover figure depends on the entry state. On the medium, 10 m/s drift takes
   about 2.0 s and 12 m/s about 2.3 s. Engine power sets the limit, not the controller.
-- First look at all six aircraft in the same scenario: scout 1.98 s, utility 1.93 s,
-  medium 1.78 s, rescue 1.78 s, attack 2.18 s, heavy 2.66 s. The scout should be quickest.
-  To fix in milestone 4.
 - With autohover off, holding W for 3 s pitches past vertical (36°/s, no limit). This is what
   the brief specifies.
 - A hands-off hover away from sea level yaws slowly (about 0.6°/s at 300 m) because the pedal

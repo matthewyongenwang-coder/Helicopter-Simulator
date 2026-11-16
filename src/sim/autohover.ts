@@ -115,7 +115,8 @@ export class Autohover {
 
     // --- Loop gains from the aircraft's own response --------------------------
     const tauEff = d.handling.attTau / (1 + A.rateLead);
-    const kAtt = A.attitudeGainFactor / tauEff;
+    // Capped: beyond this the thrust and inflow lags, not the airframe, set the pace.
+    const kAtt = Math.min(A.attitudeGainFactor / tauEff, A.maxAttitudeGain);
     const kVel = kAtt * A.velocityToAttitude;
     const kPos = kVel * A.positionToVelocity;
 

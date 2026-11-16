@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { AIRCRAFT, type AircraftData } from '../data/aircraft';
+import type { Action } from '../data/controls';
 import type { QualityName } from '../data/graphics';
+import { CameraRig } from '../render/cameras';
 import { Engine } from '../render/engine';
 import { buildHeliModel, type HeliModel } from '../render/heliModel';
 import { PropSystem } from '../render/propSystem';
 import { Sky } from '../render/sky';
 import { TerrainSystem } from '../render/terrainSystem';
 import { Water } from '../render/water';
+import type { Bindings } from '../sim/controls';
 import { KTS, Quat, RAD, Vec3 } from '../sim/math';
 import { FIXED_DT, Simulation } from '../sim/simulation';
 import { seedToString } from '../world/rng';
@@ -22,6 +25,7 @@ export interface GameOptions {
   seed: number;
   quality: QualityName;
   aircraft?: string;
+  bindings?: Bindings;
 }
 
 export interface SpawnPoint {
@@ -33,6 +37,15 @@ export interface SpawnPoint {
   name?: string;
 }
 
+export interface SpawnLoad {
+  fuelFraction?: number;
+  payload?: number;
+}
+
+export type GameMode = 'menu' | 'fly';
+
+const NAV_COLORS = [0xff2a1a, 0x1aff4a, 0xffffff];
+
 /** Top-level orchestration: owns the world, the simulation and the renderer, and runs the frame loop. */
 export class Game {
   readonly engine: Engine;
@@ -43,31 +56,43 @@ export class Game {
   readonly water: Water;
   readonly props: PropSystem;
   readonly sky: Sky;
+  readonly rig: CameraRig;
   readonly input = new KeyboardInput();
   sim!: Simulation;
   model!: HeliModel;
   aircraft: AircraftData;
+  bindings: Bindings | undefined;
 
-  /** True once the first terrain has finished generating. */
+  mode: GameMode = 'fly';
+  /** True once the world around the aircraft has finished streaming in. */
   ready = false;
   paused = false;
   frames = 0;
   /** Smoothed frame time, ms. */
   frameMs = 16.7;
+  /** Seconds flown since the last spawn. */
+  flightTime = 0;
+  /** Where the aircraft last stood on a helipad (or spawned), for respawning. */
+  lastPad: SpawnPoint;
+  lastLoad: SpawnLoad = {};
+  landingLightOn = false;
+
+  /** Hooks for the UI and audio layers. */
+  onFrame: ((dt: number) => void) | null = null;
+  onAction: ((action: Action) => void) | null = null;
+  onSpawn: (() => void) | null = null;
 
   private last = 0;
   private raf = 0;
   private hud: HTMLElement;
-  private readonly camWorld = new Vec3();
-  private readonly renderPos = new Vec3();
-  private readonly renderQ = new Quat();
-  private readonly tmpQ = new THREE.Quaternion();
-  private readonly tmpV = new THREE.Vector3();
+  readonly renderPos = new Vec3();
+  readonly renderQ = new Quat();
   private readonly focus = new THREE.Vector3();
-  private camInit = false;
+  private padTimer = 0;
 
-  constructor(private opts: GameOptions) {
+  constructor(opts: GameOptions) {
     this.hud = opts.hud;
+    this.bindings = opts.bindings;
     this.engine = new Engine(opts.canvas, opts.quality);
     this.world = new World(opts.seed);
     this.env = new WorldEnvironment(this.world);
@@ -79,8 +104,10 @@ export class Game {
       onStructures: (key, cell) => this.env.colliders.add(key, cell.x0, cell.z0, cell.colliders),
       onRemove: (key) => this.env.colliders.remove(key),
     });
+    this.rig = new CameraRig(this.engine, (x, z) => this.env.ground(x, z));
     this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
-    this.spawn(this.aircraft, this.findSpawn());
+    this.lastPad = this.findSpawn();
+    this.spawn(this.aircraft, this.lastPad);
     window.addEventListener('resize', () => this.engine.resize());
   }
 
@@ -101,26 +128,20 @@ export class Game {
         const a = (k / n) * Math.PI * 2 + ring * 0.7;
         const x = Math.cos(a) * r, z = Math.sin(a) * r;
         const h = this.world.height(x, z);
-        if (h < 4 || h > 300) continue;
-        const slope = Math.max(
-          Math.abs(this.world.height(x + 12, z) - h),
-          Math.abs(this.world.height(x - 12, z) - h),
-          Math.abs(this.world.height(x, z + 12) - h),
-          Math.abs(this.world.height(x, z - 12) - h),
-        );
-        if (slope < 0.5) return { x, z, heading: 0 };
+        if (h > 4 && h < 300 && Math.abs(this.world.height(x + 12, z) - h) < 0.5 && Math.abs(this.world.height(x, z + 12) - h) < 0.5) return { x, z, heading: 0 };
       }
     }
     return { x: 0, z: 0, heading: 0 };
   }
 
-  /** Put an aircraft on the ground at a spawn point (or in the air at `altitude` above it). */
-  spawn(data: AircraftData, at: SpawnPoint, altitude = 0, speed = 0): void {
+  /** Put an aircraft on the surface at a spawn point, or in the air at `altitude` above it. */
+  spawn(data: AircraftData, at: SpawnPoint, altitude = 0, speed = 0, load: SpawnLoad = this.lastLoad): void {
     if (this.model) {
       this.engine.scene.remove(this.model.root);
       this.model.dispose();
     }
     this.aircraft = data;
+    this.lastLoad = load;
     const ground = at.y ?? Math.max(0, this.env.ground(at.x, at.z));
     // Hold the simulation until the buildings and pads around the new position have streamed in.
     this.ready = false;
@@ -128,15 +149,36 @@ export class Game {
       data,
       this.env,
       altitude > 0
-        ? { x: at.x, y: ground + altitude, z: at.z, heading: at.heading, airborne: true, speed }
-        : { x: at.x, y: ground, z: at.z, heading: at.heading },
-      undefined,
+        ? { x: at.x, y: ground + altitude, z: at.z, heading: at.heading, airborne: true, speed, ...load }
+        : { x: at.x, y: ground, z: at.z, heading: at.heading, ...load },
+      this.bindings,
       this.world.seed,
     );
     this.input.attach(this.sim, () => this.sim.actions.releaseAll());
     this.model = buildHeliModel(data);
     this.engine.scene.add(this.model.root);
-    this.camInit = false;
+    this.rig.reset();
+    this.flightTime = 0;
+    this.padTimer = 0;
+    if (altitude === 0) this.lastPad = at;
+    this.onSpawn?.();
+  }
+
+  /** Back to the last helipad the aircraft stood on, in a fresh aircraft. */
+  respawn(): void {
+    this.spawn(this.aircraft, this.lastPad);
+  }
+
+  setBindings(b: Bindings): void {
+    this.bindings = b;
+    this.sim.actions.setBindings(b);
+  }
+
+  setMode(mode: GameMode): void {
+    this.mode = mode;
+    this.rig.mode = mode === 'menu' ? 'orbit' : 'chase';
+    this.rig.reset();
+    if (mode === 'menu') this.sim.actions.releaseAll();
   }
 
   start(): void {
@@ -157,79 +199,95 @@ export class Game {
   /** One rendered frame: step the sim, move the camera, refresh the world, draw. */
   frame(dt: number): void {
     const h = this.sim.heli;
-    if (!this.paused && this.ready) {
+    const live = !this.paused && this.ready && this.mode === 'fly';
+    if (live) {
       this.env.setAgl(h.tel.radarAlt);
       this.sim.advance(dt);
-      this.sim.takeGameActions();
+      this.flightTime += dt;
+      for (const a of this.sim.takeGameActions()) this.handleAction(a);
+      this.trackPad(dt);
+    } else {
+      // Keys pressed while paused or in the menu still reach the shell (pause, controls…).
+      for (const a of this.sim.actions.takePressed()) this.handleAction(a);
     }
     this.frames++;
     this.frameMs += (dt * 1000 - this.frameMs) * 0.05;
-    this.engine.timeUniform.value += dt;
+    if (!this.paused) this.engine.timeUniform.value += dt;
 
     // Aircraft pose for this frame: the sim state, wound back by the unsimulated remainder.
-    const back = this.paused ? 0 : (1 - this.sim.alpha) * FIXED_DT;
+    const back = live ? (1 - this.sim.alpha) * FIXED_DT : 0;
     this.renderPos.copy(h.pos).addScaled(h.vel, -back);
     this.renderQ.copy(h.q).integrateBody(-h.omega.x, -h.omega.y, -h.omega.z, back);
 
-    this.updateCamera(dt);
-    this.engine.updateOrigin(this.camWorld.x, this.camWorld.z);
+    const e = this.engine, m = this.model;
+    e.updateOrigin(this.renderPos.x, this.renderPos.z);
+    e.toScene(this.renderPos.x, this.renderPos.y, this.renderPos.z, m.root.position);
+    m.root.quaternion.set(this.renderQ.x, this.renderQ.y, this.renderQ.z, this.renderQ.w);
+    this.animateModel(dt);
+    this.rig.update(dt, this.renderPos, this.renderQ, h.att.heading, this.aircraft.rotor.diameter / 2, m.eye, live ? h.tel.vibration : 0, e.timeUniform.value);
+    const cockpit = this.rig.mode === 'cockpit';
+    m.shell.visible = !cockpit;
+    m.cockpit.visible = cockpit;
 
-    const e = this.engine;
-    e.toScene(this.renderPos.x, this.renderPos.y, this.renderPos.z, this.model.root.position);
-    this.model.root.quaternion.set(this.renderQ.x, this.renderQ.y, this.renderQ.z, this.renderQ.w);
-    this.model.blades.rotation.y = h.rotorAngle;
-    this.model.tailRotor.rotation.x = h.rotorAngle * 4.7;
-    const n = h.rotorN;
-    (this.model.rotorBlur.material as THREE.MeshBasicMaterial).opacity = 0.16 * THREE.MathUtils.smoothstep(n, 0.25, 0.75);
-    this.model.blades.visible = n < 0.85;
-    e.toScene(this.camWorld.x, this.camWorld.y, this.camWorld.z, e.camera.position);
-    this.focus.copy(this.model.root.position);
-    e.camera.lookAt(this.focus.x, this.focus.y + 1.2, this.focus.z);
-
-    this.terrain.update(this.camWorld.x, this.camWorld.y, this.camWorld.z);
+    const w = this.rig.world;
+    this.terrain.update(w.x, w.y, w.z);
     const night = 1 - THREE.MathUtils.smoothstep(this.sky.daylight, 0.12, 0.5);
-    this.props.update(this.camWorld.x, this.camWorld.y, this.camWorld.z, night, this.sky.fog.density);
+    this.props.update(w.x, w.y, w.z, night, this.sky.fog.density);
     if (!this.ready && this.terrain.settled && this.props.settled && this.terrain.stats.generated > 0) this.ready = true;
+    this.focus.copy(m.root.position);
     this.sky.update(this.focus);
     this.water.update(this.sky.daylight);
+    this.onFrame?.(dt);
     e.render();
-    if (this.frames % 6 === 0) this.drawHud();
+    if (this.frames % 6 === 0 && this.hud.classList.contains('on')) this.drawDebug();
   }
 
-  private updateCamera(dt: number): void {
+  private animateModel(dt: number): void {
+    const h = this.sim.heli, m = this.model;
+    const n = h.rotorN;
+    m.blades.rotation.y = h.rotorAngle;
+    m.tailBlades.rotation.x = h.rotorAngle * 4.7;
+    const blur = THREE.MathUtils.smoothstep(n, 0.3, 0.8);
+    (m.rotorBlur.material as THREE.MeshBasicMaterial).opacity = (h.rotorOk ? 0.17 : 0) * blur;
+    (m.tailBlur.material as THREE.MeshBasicMaterial).opacity = (h.tailRotorOk ? 0.2 : 0) * blur;
+    m.blades.visible = n < 0.9 && h.rotorOk;
+    m.tailBlades.visible = n < 0.9 && h.tailRotorOk;
+    // Lights: steady nav lights and a flashing beacon whenever the aircraft has power.
+    const powered = h.engine !== 'off' || n > 0.05;
+    const t = this.engine.timeUniform.value;
+    const level = powered ? 0.7 + 1.6 * (1 - this.sky.daylight) : 0.05;
+    m.navLights.forEach((l, i) => l.color.setHex(NAV_COLORS[i]).multiplyScalar(level));
+    m.beacon.color.setHex(0xff2010).multiplyScalar(powered && t % 1.1 < 0.12 ? 4 : 0.05);
+    m.landingLight.intensity += ((this.landingLightOn && powered ? 900 : 0) - m.landingLight.intensity) * Math.min(1, dt * 8);
+  }
+
+  /** Remember the helipad the aircraft is resting on, for respawning. */
+  private trackPad(dt: number): void {
     const h = this.sim.heli;
-    const R = this.aircraft.rotor.diameter / 2;
-    const dist = 9 + R * 1.7, height = 3 + R * 0.45;
-    // Behind the aircraft along its heading, ignoring pitch and roll.
-    const hd = h.att.heading;
-    const tx = this.renderPos.x - Math.sin(hd) * dist;
-    const tz = this.renderPos.z + Math.cos(hd) * dist;
-    let ty = this.renderPos.y + height;
-    const floor = Math.max(0, this.env.ground(tx, tz)) + 1.5;
-    if (ty < floor) ty = floor;
-    if (!this.camInit) {
-      this.camWorld.set(tx, ty, tz);
-      this.camInit = true;
-      return;
-    }
-    const k = 1 - Math.exp(-dt * 6);
-    this.camWorld.x += (tx - this.camWorld.x) * k;
-    this.camWorld.y += (ty - this.camWorld.y) * k;
-    this.camWorld.z += (tz - this.camWorld.z) * k;
+    if (h.tel.onGround && h.tel.surfaceKind === 3 && h.vel.len() < 0.3 && !h.destroyed) {
+      this.padTimer += dt;
+      if (this.padTimer > 1.5) {
+        this.lastPad = { x: h.pos.x, z: h.pos.z, y: h.pos.y - h.ac.restHeight, heading: h.att.heading, name: 'Last helipad' };
+        this.padTimer = -1e9; // once per landing
+      }
+    } else if (!h.tel.onGround) this.padTimer = 0;
   }
 
-  private drawHud(): void {
-    const t = this.sim.heli.tel, h = this.sim.heli;
-    const lines = [
-      `SEED ${seedToString(this.world.seed)}`,
-      this.ready ? '' : 'GENERATING WORLD…',
-      `${this.aircraft.name}  ENG ${h.engine.toUpperCase()}  NR ${(t.rotorRpm * 100).toFixed(0)}%  TQ ${(t.torque * 100).toFixed(0)}%`,
-      `IAS ${(t.airspeed / KTS).toFixed(0)} kt  ALT ${t.baroAlt.toFixed(0)} m  RAD ${t.radarAlt.toFixed(0)} m  VS ${t.verticalSpeed.toFixed(1)} m/s`,
-      `HDG ${(t.heading * RAD).toFixed(0)}°  COLL ${(t.collective * 100).toFixed(0)}%  ${h.autohover.engaged ? 'AUTOHOVER ' + h.autohover.mode.toUpperCase() : ''}`,
-      `${(1000 / this.frameMs).toFixed(0)} fps  nodes ${this.terrain.stats.shown}  tris ${(this.engine.renderer.info.render.triangles / 1000).toFixed(0)}k  calls ${this.engine.renderer.info.render.calls}`,
-      h.destroyed ? `DESTROYED: ${h.destroyedReason}` : '',
-    ];
-    this.hud.textContent = lines.filter(Boolean).join('\n');
+  private handleAction(a: Action): void {
+    if (a === 'cameraNext' && this.mode === 'fly') this.rig.next();
+    else if (a === 'landingLight') this.landingLightOn = !this.landingLightOn;
+    else if (a === 'respawn' && this.mode === 'fly') this.respawn();
+    this.onAction?.(a);
+  }
+
+  private drawDebug(): void {
+    const t = this.sim.heli.tel, h = this.sim.heli, r = this.engine.renderer.info.render;
+    this.hud.textContent = [
+      `SEED ${seedToString(this.world.seed)}  ${this.ready ? '' : 'GENERATING…'}`,
+      `${this.aircraft.name}  ENG ${h.engine}  NR ${(t.rotorRpm * 100).toFixed(0)}%  TQ ${(t.torque * 100).toFixed(0)}%  mass ${t.mass.toFixed(0)}`,
+      `IAS ${(t.airspeed / KTS).toFixed(0)} kt  ALT ${t.baroAlt.toFixed(0)}  RAD ${t.radarAlt.toFixed(1)}  VS ${t.verticalSpeed.toFixed(1)}  HDG ${(t.heading * RAD).toFixed(0)}`,
+      `${(1000 / this.frameMs).toFixed(0)} fps  nodes ${this.terrain.stats.shown}  tris ${(r.triangles / 1000).toFixed(0)}k  calls ${r.calls}  cells ${this.props.stats.structureCells}/${this.props.stats.forestCells}`,
+    ].join('\n');
   }
 
   /** Points of interest near the aircraft, for tests and screenshots. */

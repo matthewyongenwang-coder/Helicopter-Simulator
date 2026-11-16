@@ -165,6 +165,7 @@ export const TUNING = {
     /** Rate-loop lead: commanded rate = wanted + lead × (wanted − actual). */
     rateLead: 4.0,
     attitudeGainFactor: 0.5, // k_att = factor / effective tau
+    maxAttitudeGain: 15, // 1/s
     /** Vertical loop. */
     verticalGain: 3.2, // 1/s, vertical speed error → acceleration
     altitudeGain: 1.3, // 1/s
