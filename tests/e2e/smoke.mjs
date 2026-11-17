@@ -205,6 +205,39 @@ try {
       const back = await page.evaluate(() => ({ destroyed: window.__game.sim.heli.destroyed, onGround: window.__game.sim.heli.tel.onGround }));
       check(!back.destroyed, 'R respawns at the last helipad', JSON.stringify(back));
     }
+    // Mouse look: right turns the view right and up looks up, in the chase and the cockpit view.
+    // Real mouse input: a click captures the mouse (or starts a drag where pointer lock is unavailable).
+    const viewDir = () => page.evaluate(() => {
+      const cam = window.__game.engine.camera, v = cam.getWorldDirection(new cam.position.constructor());
+      return { yaw: Math.atan2(v.x, -v.z), y: v.y };
+    });
+    const lookTurn = async (dx, dy) => {
+      await page.mouse.move(640, 360);
+      await page.mouse.down();
+      await page.waitForTimeout(200);
+      const a = await viewDir();
+      await page.mouse.move(640 + dx, 360 + dy, { steps: 8 });
+      await page.waitForTimeout(400);
+      const b = await viewDir();
+      await page.mouse.up();
+      const locked = await page.evaluate(() => document.pointerLockElement !== null);
+      if (locked) await page.evaluate(() => document.exitPointerLock());
+      await page.keyboard.press('KeyV');
+      await page.waitForTimeout(900);
+      let d = b.yaw - a.yaw;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      return { turn: d, up: b.y - a.y, locked };
+    };
+    for (const view of ['chase', 'cockpit']) {
+      const right = await lookTurn(120, 0), up = await lookTurn(0, -80);
+      check(right.turn > 0.2 && up.up > 0.05, `mouse look follows the mouse in the ${view} view`, `right → ${right.turn.toFixed(2)} rad, up → ${up.up.toFixed(2)}, pointer lock ${right.locked}`);
+      if (view === 'chase') {
+        await page.keyboard.press('KeyC');
+        await page.waitForTimeout(300);
+      }
+    }
+    await page.keyboard.press('KeyC');
+    await page.waitForTimeout(300);
     // Cockpit view.
     await page.keyboard.press('KeyC');
     await page.waitForTimeout(800);

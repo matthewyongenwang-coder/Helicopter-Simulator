@@ -49,7 +49,8 @@ the attitude of the aircraft; all motion comes from where the thrust points.
 | **B** | Wheel brake (wheeled aircraft) |
 | **L** | Landing light |
 | **C** | Chase / cockpit camera |
-| **V** (hold) or mouse drag | Free look |
+| Mouse | Look around: click the view once and the camera follows the mouse. **Esc** frees the cursor. |
+| **V** | Centre the view |
 | **M** | Minimap zoom |
 | **H** or **F1** | Controls overlay (rebind any key here) |
 | **R** | Respawn at the last helipad you landed on |

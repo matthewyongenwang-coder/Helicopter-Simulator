@@ -33,7 +33,7 @@ export class ControlsOverlay {
       el('p', { class: 'lede' }, 'No key moves the helicopter directly. Collective sets thrust, cyclic tilts it, and the motion comes from where the thrust points. Click a key to rebind it.'),
       el('div', { class: 'scroll' }, this.grid),
       el('div', { class: 'foot' },
-        el('span', { class: 'tip' }, 'Drag the mouse to look around'),
+        el('span', { class: 'tip' }, 'Click the view to look around with the mouse. Esc frees the cursor.'),
         el('button', { class: 'btn', onclick: () => this.reset() }, 'Reset to defaults'),
         el('button', { class: 'btn primary', onclick: () => this.close() }, 'Done'),
       ),

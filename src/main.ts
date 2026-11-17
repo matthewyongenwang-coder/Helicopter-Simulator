@@ -93,9 +93,11 @@ function startFlying(): void {
   menu.close();
   ui.classList.add('on');
   canvas.focus();
+  captureMouse();
 }
 
 function openMenu(): void {
+  releaseMouse();
   const resumable = game.mode === 'fly' && game.flightTime > 0 && !game.sim.heli.destroyed;
   ui.classList.remove('on');
   game.setMode('menu');
@@ -148,6 +150,8 @@ controls = new ControlsOverlay(overlays, {
   },
   capture: (fn) => (game.input.capture = fn),
   onOpenChange: (open) => {
+    if (open) releaseMouse();
+    else if (game.mode === 'fly') captureMouse();
     game.paused = open;
     game.sim.actions.releaseAll();
   },
@@ -161,12 +165,15 @@ game.onAction = (a) => {
     } else openMenu();
   } else if (a === 'toggleControls') controls.toggle();
   else if (a === 'toggleMap') hud.minimap.cycleZoom();
+  else if (a === 'freeLook') game.rig.recenter();
 };
 
 game.onFrame = (dt) => {
   loading.classList.toggle('on', !game.ready);
-  game.rig.looking = dragging || game.sim.actions.isHeld('freeLook');
+  game.rig.looking = mouseLooking() || dragging;
   const h = game.sim.heli, t = h.tel, W = game.weather;
+  // Free the cursor for the crash banner's buttons.
+  if (h.destroyed && mouseCaptured()) releaseMouse();
   const flying = game.mode === 'fly';
   if (flying) {
     hud.update({
@@ -187,6 +194,7 @@ game.onFrame = (dt) => {
       windZ: W.windZ,
       turbulence: W.areaTurbulence + W.cur.gust,
       seed: seedText,
+      mouseLook: mouseLooking(),
     }, dt);
   }
   audio.update({
@@ -214,21 +222,51 @@ game.onFrame = (dt) => {
   wasDestroyed = h.destroyed;
 };
 
-// Free look: drag with either mouse button, or hold the free-look key and move the mouse.
+// Mouse look: click the view once and the camera follows the mouse (pointer lock), with no
+// button held. Esc gives the cursor back. Where pointer lock is unavailable, dragging works.
 let dragging = false;
+/** The browser refused pointer lock (some embedded browsers do): follow plain mouse movement instead. */
+let lockRefused = false;
+document.addEventListener('pointerlockerror', () => (lockRefused = true));
+const mouseCaptured = () => document.pointerLockElement === canvas;
+/** The view follows the mouse without a button: captured, or hovering the view where capture is refused. */
+const mouseLooking = () => mouseCaptured() || (lockRefused && hovering && game.mode === 'fly' && !controls.isOpen && !game.sim.heli.destroyed);
+let hovering = false;
+canvas.addEventListener('pointerleave', () => (hovering = false));
+function captureMouse(): void {
+  if (mouseCaptured() || game.mode !== 'fly' || !canvas.requestPointerLock) return;
+  try {
+    const p = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
+    p?.catch?.(() => {});
+  } catch {
+    // Not allowed without a user gesture: the next click on the view will capture it.
+  }
+}
+function releaseMouse(): void {
+  if (mouseCaptured()) document.exitPointerLock();
+  dragging = false;
+}
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
-  if (e.button === 2 || e.button === 0) {
+  if (controls.isOpen) return;
+  if (game.mode === 'fly' && !mouseCaptured()) captureMouse();
+  if (!mouseCaptured() && (e.button === 0 || e.button === 2)) {
     dragging = true;
-    canvas.setPointerCapture(e.pointerId);
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // A pointer-lock request is in flight; the drag still works without capture.
+    }
   }
 });
 canvas.addEventListener('pointerup', (e) => {
+  if (!dragging) return;
   dragging = false;
-  canvas.releasePointerCapture(e.pointerId);
+  if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
 });
-canvas.addEventListener('pointermove', (e) => {
-  if (dragging || game.sim.actions.isHeld('freeLook')) game.rig.lookBy(e.movementX, e.movementY);
+document.addEventListener('pointermove', (e) => {
+  hovering = e.target === canvas;
+  if (mouseLooking() || dragging) game.rig.lookBy(e.movementX, e.movementY);
 });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Backquote') debug.classList.toggle('on');

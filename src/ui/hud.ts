@@ -27,6 +27,8 @@ export interface HudState {
   windZ: number;
   turbulence: number;
   seed: string;
+  /** The mouse is captured for looking around. */
+  mouseLook: boolean;
 }
 
 export interface HudActions {
@@ -188,7 +190,8 @@ export class Hud {
     else if (s.engine === 'off' && s.tel.rotorRpm < 0.05) hint = [[k.engineToggle, 'Start engine'], [k.toggleControls, 'Controls']];
     else if (s.engine === 'starting') hint = [['', 'Rotor spooling up, wait for the green']];
     else if (s.tel.onGround && s.tel.rotorRpm >= TUNING.engine.greenMin) hint = [[k.collectiveUp, 'Raise collective to lift off'], [k.autohoverToggle, 'Autohover']];
-    else hint = [[k.cameraNext, 'Camera'], [k.autohoverToggle, 'Autohover'], [k.toggleControls, 'Controls']];
+    else if (!s.mouseLook) hint = [['Click', 'Look around'], [k.cameraNext, 'Camera'], [k.toggleControls, 'Controls']];
+    else hint = [[k.freeLook, 'Centre view'], [k.cameraNext, 'Camera'], [k.toggleControls, 'Controls']];
     const hs = JSON.stringify(hint);
     if (hs !== this.lastHint) {
       this.lastHint = hs;

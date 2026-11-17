@@ -18,8 +18,10 @@ export class CameraRig {
   lookPitch = 0;
   private vYaw = 0;
   private vPitch = 0;
-  /** True while the player is steering the view. */
+  /** True while the player is steering the view (mouse captured, or a drag). The view then stays where it is put. */
   looking = false;
+  /** Easing back to straight ahead after the centre-view key. */
+  private recentering = false;
   private orbit = 0;
   private snap = true;
   private shake = 0;
@@ -42,8 +44,17 @@ export class CameraRig {
     return this.mode;
   }
 
-  /** Turn the view by a mouse movement, in pixels. */
+  /** Ease the view back to straight ahead (it stays there until the mouse moves again). */
+  recenter(): void {
+    this.recentering = true;
+  }
+
+  /**
+   * Turn the view by a mouse movement, in pixels. Mouse right turns the view right
+   * and mouse up looks up, in every camera. Positive `lookYaw` is a turn to the left.
+   */
   lookBy(dx: number, dy: number): void {
+    this.recentering = false;
     this.lookYaw -= dx * 0.0042;
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * 0.0042, -1.25, 1.25);
     this.vYaw = this.vPitch = 0;
@@ -51,7 +62,7 @@ export class CameraRig {
 
   update(dt: number, pos: Vec3, q: Quat, heading: number, rotorRadius: number, eye: THREE.Vector3, vibration: number, time: number): void {
     // Free look returns to centre on a critically damped spring once released.
-    if (!this.looking) {
+    if (!this.looking || this.recentering) {
       const k = 60, c = 2 * Math.sqrt(k);
       this.vYaw += (-k * this.lookYaw - c * this.vYaw) * dt;
       this.vPitch += (-k * this.lookPitch - c * this.vPitch) * dt;
@@ -88,11 +99,12 @@ export class CameraRig {
       this.orbit += dt * 0.11;
       dist = 7.5 + rotorRadius * 2.5;
       height = 2.2 + rotorRadius * 0.55;
-      yaw = heading + 2.5 + this.orbit + this.lookYaw;
+      yaw = heading + 2.5 + this.orbit - this.lookYaw;
     } else {
       dist = 9 + rotorRadius * 1.7;
       height = 3 + rotorRadius * 0.45;
-      yaw = heading + Math.PI + this.lookYaw; // behind the tail, turned by free look
+      // Behind the tail. Turning the view left swings the camera round to the right of the aircraft.
+      yaw = heading + Math.PI - this.lookYaw;
       pitchUp = this.lookPitch;
     }
     // Swing the boom up or down with free-look pitch, keeping the same reach.
