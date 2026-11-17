@@ -24,7 +24,7 @@ const url = `${server.resolvedUrls.local[0]}?seed=${seed}&quality=${quality}${ex
 
 const browser = await chromium.launch({
   headless: true,
-  args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu'],
+  args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-webgpu', '--enable-precise-memory-info'],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
 const errors = [];
@@ -32,6 +32,8 @@ page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
 });
 page.on('pageerror', (e) => errors.push(String(e)));
+page.on('crash', () => console.log('PAGE CRASHED'));
+page.on('framenavigated', (f) => { if (f === page.mainFrame() && args.verbose) console.log('navigated', f.url()); });
 
 let failed = false;
 const check = (ok, label, detail = '') => {
@@ -373,6 +375,148 @@ try {
       `${first} then ${second} geometries (peak ${cruise.maxGeo} en route)`,
     );
   }
+  // Playtest with real key presses: start, lift off, autohover, fly forward, brake, descend and land.
+  if (args.playtest !== '0') {
+    // An open town helipad: downtown towers are no place for a scripted pilot.
+    const padName = await page.evaluate(() => {
+      const g = window.__game, p = g.sim.heli.pos;
+      g.weather.setMode('fair', true);
+      g.weather.hour = 10;
+      const pads = g.helipads(p.x, p.z, 30000);
+      const pad = pads.find((q) => q.kind === 'ground' && q.rank <= 2) ?? pads.find((q) => q.kind === 'ground');
+      g.spawn(g.aircraft, { x: pad.x, z: pad.z, y: pad.y, heading: pad.heading, name: pad.name });
+      return pad.name;
+    });
+    console.log('playtest from', padName);
+    await page.waitForFunction(() => window.__game.ready, null, { timeout: 60000 });
+    // Waits are in simulated seconds, so a slow or throttled frame rate does not change the flight.
+    const simTime = () => page.evaluate(() => window.__game.sim.heli.time);
+    const waitSim = async (ms) => {
+      const end = (await simTime()) + ms / 1000;
+      await page.waitForFunction((end) => window.__game.sim.heli.time >= end, end, { timeout: 180000, polling: 16 });
+    };
+    const st = () => page.evaluate(() => {
+      const h = window.__game.sim.heli, t = h.tel;
+      return { impact: t.lastImpact, why: h.destroyedReason, minVs: window.__minVs ?? 0, nr: t.rotorRpm, ralt: t.radarAlt, gs: t.groundSpeed, vs: t.verticalSpeed, tilt: Math.hypot(t.pitch, t.roll) * 57.3, onGround: t.onGround, health: h.health, engine: h.engine, auto: h.autohover.engaged, x: h.pos.x, z: h.pos.z, kind: t.surfaceKind };
+    });
+    const start = await st();
+    await page.keyboard.press('KeyJ');
+    const t0 = await simTime();
+    await page.waitForFunction(() => window.__game.sim.heli.tel.rotorRpm >= 0.95, null, { timeout: 90000, polling: 16 });
+    const spool = (await simTime()) - t0;
+    check(spool > 8 && spool < 25, 'J starts the engine and the rotor spools up slowly', `${spool.toFixed(1)} s to the green`);
+    await page.keyboard.down('Space');
+    await page.waitForFunction(() => window.__game.sim.heli.tel.radarAlt > 25, null, { timeout: 30000 });
+    await page.keyboard.up('Space');
+    await page.keyboard.press('KeyX');
+    await waitSim(3000);
+    let s1 = await st();
+    check(s1.auto && Math.abs(s1.vs) < 0.5 && s1.gs < 0.5, 'lift off with Space, X settles into a hover', `ralt ${s1.ralt.toFixed(1)} m, vs ${s1.vs.toFixed(2)}, gs ${s1.gs.toFixed(2)}`);
+    await page.keyboard.down('KeyW');
+    await waitSim(4000);
+    s1 = await st();
+    await page.keyboard.up('KeyW');
+    check(s1.gs > 8, 'holding W flies forward', `${s1.gs.toFixed(1)} m/s`);
+    await waitSim(7000);
+    const s2 = await st();
+    // Level apart from the few degrees of lean that hold it against the wind.
+    check(s2.gs < 0.4 && s2.tilt < 5, 'releasing W brakes to a hover', `gs ${s2.gs.toFixed(2)}, tilt ${s2.tilt.toFixed(1)}°`);
+    // Back over the pad: fly the reverse leg with S, then descend with Shift.
+    // Back over the pad, flown like a pilot would with autohover on: cyclic pulses toward it,
+    // let go, and let autohover brake. Forward is (sin h, −cos h), right is (cos h, sin h).
+    for (let k = 0; k < 40; k++) {
+      const p = await page.evaluate(() => {
+        const h = window.__game.sim.heli;
+        return { x: h.pos.x, z: h.pos.z, hd: h.tel.heading, gs: h.tel.groundSpeed };
+      });
+      const dx = start.x - p.x, dz = start.z - p.z;
+      const fwd = dx * Math.sin(p.hd) - dz * Math.cos(p.hd);
+      const right = dx * Math.cos(p.hd) + dz * Math.sin(p.hd);
+      if (args.verbose) console.log(`  return: fwd ${fwd.toFixed(1)} right ${right.toFixed(1)} gs ${p.gs.toFixed(2)}`);
+      if (Math.hypot(fwd, right) < 4 && p.gs < 0.5) break;
+      const keys = [];
+      if (Math.abs(fwd) > 1.5) keys.push([fwd > 0 ? 'KeyW' : 'KeyS', Math.min(2600, 350 + Math.abs(fwd) * 40)]);
+      if (Math.abs(right) > 1.5) keys.push([right > 0 ? 'KeyD' : 'KeyA', Math.min(2000, 300 + Math.abs(right) * 35)]);
+      for (const [key] of keys) await page.keyboard.down(key);
+      const tStart = await simTime();
+      for (const [key, ms] of keys.sort((a, b) => a[1] - b[1])) {
+        await waitSim(Math.max(0, ms - ((await simTime()) - tStart) * 1000));
+        await page.keyboard.up(key);
+      }
+      await waitSim(2200);
+    }
+    // Let down in steps, the way a pilot would: a short push on the lever, then let autohover hold.
+    let landed = false;
+    for (let k = 0; k < 50; k++) {
+      const now = await st();
+      if (args.verbose) console.log(`  descent: ralt ${now.ralt.toFixed(2)} vs ${now.vs.toFixed(2)} ground ${now.onGround}`);
+      if (now.onGround) {
+        landed = true;
+        break;
+      }
+      await page.keyboard.down('ShiftLeft');
+      await waitSim(Math.max(650, Math.min(1100, now.ralt * 45)));
+      await page.keyboard.up('ShiftLeft');
+      await waitSim(1400);
+    }
+    // On the ground: lever fully down.
+    if (landed) {
+      await page.keyboard.down('ShiftLeft');
+      await waitSim(2500);
+      await page.keyboard.up('ShiftLeft');
+    }
+    await waitSim(2000);
+    const s3 = await st();
+    await page.screenshot({ path: join(out, 'playtest_landed.png') });
+    check(s3.onGround && s3.health === 1, 'Shift descends and lands without damage', `${JSON.stringify({ impact: s3.impact.toFixed(2), why: s3.why, onGround: s3.onGround, health: s3.health, kind: s3.kind, off: Math.hypot(s3.x - start.x, s3.z - start.z).toFixed(1) })}`);
+  }
+
+  // Soak: a long flight with the weather cycling fast, watching for growth in memory and GPU resources.
+  if (args.soak) {
+    const seconds = Number(args.soak);
+    await page.evaluate(() => {
+      const g = window.__game, h = g.sim.heli;
+      g.weather.setMode('auto', true);
+      g.setPose(h.pos.x, h.pos.z, 220, 0, 70);
+      const soak = { t0: performance.now(), samples: [] };
+      window.__soak = soak;
+      soak.timer = setInterval(() => {
+        const hh = g.sim.heli;
+        const el = (performance.now() - soak.t0) / 1000;
+        // Turn every 20 s so the flight covers new and old ground.
+        const heading = Math.floor(el / 20) * 1.9;
+        hh.vel.set(Math.sin(heading) * 70, 0, -Math.cos(heading) * 70);
+        hh.pos.y = Math.max(hh.pos.y, g.env.ground(hh.pos.x, hh.pos.z) + 220);
+        // Fast-forward the weather and the clock.
+        g.weather.update(1.5, g.world, hh.pos.x, hh.pos.z, 200);
+      }, 100);
+    });
+    const samples = [];
+    const t0 = Date.now();
+    while ((Date.now() - t0) / 1000 < seconds) {
+      await page.waitForTimeout(5000);
+      const smp = await page.evaluate(() => {
+        const g = window.__game, m = g.engine.renderer.info.memory;
+        return { heap: performance.memory ? performance.memory.usedJSHeapSize / 1e6 : 0, geo: m.geometries, tex: m.textures, cpu: g.cpuMs, x: g.sim.heli.pos.x, z: g.sim.heli.pos.z };
+      });
+      smp.t = (Date.now() - t0) / 1000;
+      samples.push(smp);
+      if (args.verbose) console.log(`  soak t=${smp.t.toFixed(0)} heap ${smp.heap.toFixed(0)} MB geo ${smp.geo} tex ${smp.tex} cpu ${smp.cpu.toFixed(1)}`);
+    }
+    await page.evaluate(() => clearInterval(window.__soak.timer));
+    const s = samples;
+    const third = Math.max(1, Math.floor(s.length / 3));
+    const avg = (arr, k) => arr.reduce((a, b) => a + b[k], 0) / arr.length;
+    const early = s.slice(third, 2 * third), late = s.slice(2 * third);
+    const heapGrowth = avg(late, 'heap') - avg(early, 'heap');
+    const maxGeo = Math.max(...s.map((x) => x.geo)), maxTex = Math.max(...s.map((x) => x.tex));
+    console.log(`soak ${seconds}s: heap ${avg(early, 'heap').toFixed(0)} → ${avg(late, 'heap').toFixed(0)} MB, geometries max ${maxGeo}, textures max ${maxTex}, cpu ${avg(s, 'cpu').toFixed(1)} ms/frame`);
+    check(heapGrowth < 40, 'no steady JS heap growth over a long flight', `${heapGrowth.toFixed(1)} MB between the middle and last third`);
+    check(maxGeo < 900 && maxTex < 200, 'GPU resources stay bounded', `${maxGeo} geometries, ${maxTex} textures`);
+  }
+
+  const cpu = await page.evaluate(() => window.__game.cpuMs);
+  console.log(`main-thread time per frame: ${cpu.toFixed(2)} ms`);
   check(errors.length === 0, 'no console errors', errors.slice(0, 5).join(' | '));
 } catch (e) {
   check(false, 'run completed', String(e));

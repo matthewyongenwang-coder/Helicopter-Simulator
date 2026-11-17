@@ -9,7 +9,7 @@
 | 3 | Settlements, roads, bridges, forests, props | **Done** |
 | 4 | Six aircraft, models, spawn menu | **Done** |
 | 5 | HUD, cameras, audio, weather, day/night, damage, polish | **Done** |
-| 6 | Performance pass, playtest, README | Not started |
+| 6 | Performance pass, playtest, README | **Done** |
 
 ## Milestone 1
 
@@ -161,6 +161,30 @@ Verified (`tests/world/weather.test.ts`, 9 tests, and `npm run e2e`):
 | Frame rate with clouds, shadows, particles, rain | 60 fps in every shot, no console errors |
 | Memory | Same trip twice costs the same GPU geometry count (304 and 304) |
 
+## Milestone 6
+
+- `Game.cpuMs`: main-thread time per frame (sim, streaming, effects, render submission), shown
+  in the debug read-out (`` ` ``) and reported by the end-to-end run.
+- Playtest in the browser with real key presses (`npm run e2e`): from a town heliport, J starts
+  the engine (13.5 s to the green), Space lifts off, X settles the hover, holding W flies forward
+  at 20 m/s, releasing it brakes to a hover, cyclic pulses fly back over the pad, and short
+  Shift pushes let down onto it: landed on the helipad 3.6 m from the start point at 1.4 m/s,
+  airframe undamaged.
+- Soak (`npm run e2e -- --soak=300`): a 5-minute, 21 km flight at 70 m/s, turning every 20 s,
+  with the weather cycling 15× faster than normal.
+- `README.md`: running, controls, a first-flight guide, aircraft, world, architecture, tests.
+
+Verified:
+
+| Check | Result |
+|---|---|
+| Main-thread time per frame | 2.5–3.4 ms (medium and low), leaving most of the frame for the GPU |
+| Frame rate | 60 fps in every scene on medium and low, including storm, fog, snow, above the clouds, a city at night and a 165 kt cruise |
+| Low preset | 0.2–0.5 M triangles against 1.6 M on medium; no clouds or shadows; no errors |
+| Memory over a long flight | JS heap 54–76 MB with no trend (middle third 63 MB, last third 68 MB); GPU geometries level off near 500; 7 textures throughout |
+| Production build | `npm run build` passes, 205 KB gzipped plus a 29 KB worker |
+| Unit tests | 101 passing |
+
 ## Decisions
 
 - **Settlement kinds are capped by peak density**, so only cities reach tower density and
@@ -196,6 +220,12 @@ Verified (`tests/world/weather.test.ts`, 9 tests, and `npm run e2e`):
   rotor out of its own wake, and keeps some airspeed on in a fast vertical descent.
 - **Drag area is derived from the listed top speed.** Climb rate, ceiling, endurance and range
   for the menu are computed from the same model, not typed in.
+- **The playtest flies from a town pad, not downtown.** Flying forward at 40 m between
+  skyscrapers ends in a rotor strike, which the sim correctly reports; a scripted pilot has no
+  eyes, so it takes off where the air around the pad is clear.
+- **The playtest waits in simulated time.** The browser can advance the sim slower than the
+  wall clock when frames are slow, so key holds measured in real milliseconds flew different
+  flights on different runs. Holding W for 4 simulated seconds gives the same 20 m/s every time.
 - **The weather drives the clock and the sky.** Tests that need a time of day set
   `weather.hour`, not the sky directly.
 - **Aircraft shadow only below 350 m.** The sun's disc blurs a small aircraft's shadow away above
@@ -217,6 +247,10 @@ Verified (`tests/world/weather.test.ts`, 9 tests, and `npm run e2e`):
   Real rotors add flapback; that is left out to keep attitude purely pilot-driven.
 - Climb rates from the model (14–23 m/s) are higher than real aircraft of these classes.
 - The GateGuard hook blocks the first write of every new file until its facts are stated.
+- The full `npm run e2e` takes over ten minutes because of the cruise, playtest and leak
+  checks. `--cruise=0 --playtest=0 --world=0` gives a quick run.
+- Performance has only been measured on an Apple M3 Pro. The main-thread budget suggests a
+  mid-range laptop will manage, but the low preset is the fallback if it does not.
 - Cloud edges show some fine grain at grazing angles (a short ray march without temporal
   accumulation).
 - Rain and snow do not yet stop under bridges or roofs.

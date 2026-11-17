@@ -80,6 +80,10 @@ export class Game {
   frames = 0;
   /** Smoothed frame time, ms. */
   frameMs = 16.7;
+  /** Smoothed main-thread time spent in one frame (sim, world streaming, effects, render submit), ms. */
+  cpuMs = 0;
+  /** Worst main-thread frame time since last read, ms. */
+  cpuPeak = 0;
   /** Seconds flown since the last spawn. */
   flightTime = 0;
   /** Where the aircraft last stood on a helipad (or spawned), for respawning. */
@@ -230,6 +234,14 @@ export class Game {
 
   /** One rendered frame: step the sim, move the camera, refresh the world, draw. */
   frame(dt: number): void {
+    const t0 = performance.now();
+    this.frameInner(dt);
+    const ms = performance.now() - t0;
+    this.cpuMs += (ms - this.cpuMs) * 0.05;
+    this.cpuPeak = Math.max(this.cpuPeak, ms);
+  }
+
+  private frameInner(dt: number): void {
     const h = this.sim.heli;
     const live = !this.paused && this.ready && this.mode === 'fly';
     if (live) {
@@ -462,7 +474,7 @@ export class Game {
       `SEED ${seedToString(this.world.seed)}  ${this.ready ? '' : 'GENERATING…'}`,
       `${this.aircraft.name}  ENG ${h.engine}  NR ${(t.rotorRpm * 100).toFixed(0)}%  TQ ${(t.torque * 100).toFixed(0)}%  mass ${t.mass.toFixed(0)}`,
       `IAS ${(t.airspeed / KTS).toFixed(0)} kt  ALT ${t.baroAlt.toFixed(0)}  RAD ${t.radarAlt.toFixed(1)}  VS ${t.verticalSpeed.toFixed(1)}  HDG ${(t.heading * RAD).toFixed(0)}`,
-      `${(1000 / this.frameMs).toFixed(0)} fps  nodes ${this.terrain.stats.shown}  tris ${(r.triangles / 1000).toFixed(0)}k  calls ${r.calls}  cells ${this.props.stats.structureCells}/${this.props.stats.forestCells}`,
+      `${(1000 / this.frameMs).toFixed(0)} fps  cpu ${this.cpuMs.toFixed(1)} ms  nodes ${this.terrain.stats.shown}  tris ${(r.triangles / 1000).toFixed(0)}k  calls ${r.calls}  cells ${this.props.stats.structureCells}/${this.props.stats.forestCells}`,
     ].join('\n');
   }
 
