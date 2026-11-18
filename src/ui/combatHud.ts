@@ -1,4 +1,5 @@
 import { compoundHealth, type Combat, type CombatEvent } from '../game/combat';
+import type { SupplyEvent, SupplyStatus } from '../game/resupply';
 import { el } from './menu';
 
 /** Screen position of a world point: pixels, and whether it is in front of the camera. */
@@ -20,6 +21,8 @@ export interface CombatHudFrame {
   flash: number;
   alive: boolean;
   keys: Record<string, string>;
+  supply: SupplyStatus;
+  supplyEvents: SupplyEvent[];
 }
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -51,6 +54,14 @@ export class CombatHud {
   private cardBar = el('i', {});
   private panel = el('div', { class: 'hud-weapons hud-panel' });
   private toast = el('div', { class: 'toast', role: 'status' });
+  private supplyMark = el('div', { class: 'marker supply', 'aria-hidden': 'true' }, el('b', {}));
+  private supplyLabel = el('span', { class: 'num' });
+  private supplyCard = el('div', { class: 'supply-card hud-panel', 'aria-live': 'polite' });
+  private supplyName = el('div', { class: 'name' });
+  private supplyMeta = el('div', { class: 'meta' });
+  private supplyBar = el('i', {});
+  private lastSupply = '';
+  private emptyHint = 0;
   private flash = el('div', { class: 'screen-flash', 'aria-hidden': 'true' });
   private vignette = el('div', { class: 'hit-vignette', 'aria-hidden': 'true' });
   private hitTimer = 0;
@@ -81,7 +92,9 @@ export class CombatHud {
       root.append(m);
     }
     this.card.append(this.cardName, this.cardMeta, el('div', { class: 'bar' }, this.cardBar));
-    root.append(this.flash, this.vignette, this.reticle, this.lockBox, this.card, this.panel, this.toast);
+    this.supplyMark.append(this.supplyLabel);
+    this.supplyCard.append(this.supplyName, this.supplyMeta, el('div', { class: 'bar' }, this.supplyBar));
+    root.append(this.flash, this.vignette, this.reticle, this.lockBox, this.supplyMark, this.card, this.supplyCard, this.panel, this.toast);
   }
 
   /** Show a short message in the middle of the screen. */
@@ -102,7 +115,18 @@ export class CombatHud {
         this.hitMark.classList.toggle('kill', e.kill);
       } else if (e.type === 'playerHit') this.hurt = Math.min(1, this.hurt + (e.missile ? 1 : 0.35 + e.amount * 8));
       else if (e.type === 'compoundDestroyed') this.say(`${e.compound.site.name} destroyed`, 'ok');
-      else if (e.type === 'empty') this.say(e.weapon === 'gun' ? 'Gun empty' : e.weapon === 'missile' ? (c.loadout.missile ? 'No missiles left' : 'No missiles on this aircraft') : 'No flares left', 'warn');
+      else if (e.type === 'empty') {
+        const msg = e.weapon === 'gun' ? 'Gun empty' : e.weapon === 'missile' ? (c.loadout.missile ? 'No missiles left' : 'No missiles on this aircraft') : 'No flares left';
+        // Point the way to a reload, once in a while.
+        const hint = this.emptyHint <= 0 && (e.weapon !== 'missile' || !!c.loadout.missile);
+        if (hint) this.emptyHint = 20;
+        this.say(hint ? `${msg} · land at a green supply point to rearm` : msg, 'warn');
+      }
+    }
+    this.emptyHint -= dt;
+    for (const e of f.supplyEvents) {
+      if (e.type === 'started') this.say(`Resupplying at ${e.site.name}`, 'info');
+      else this.say('Fully resupplied', 'ok');
     }
     this.hitTimer -= dt;
     this.hitMark.classList.toggle('on', this.hitTimer > 0);
@@ -135,6 +159,51 @@ export class CombatHud {
     this.updateMarkers(f);
     this.updateCard(f);
     this.updatePanel(f);
+    this.updateSupply(f);
+  }
+
+  /** The nearest supply point: a green marker until you are there, then the crew's progress. */
+  private updateSupply(f: CombatHudFrame): void {
+    const S = f.supply, site = S.site;
+    const show = !!site && f.alive;
+    const near = show && S.dist < 160;
+    if (!show || near) this.supplyMark.style.display = 'none';
+    else {
+      const W = window.innerWidth, H = window.innerHeight, pad = 28;
+      const p = f.project(site.x, site.y + 14, site.z);
+      let x = p.x, y = p.y;
+      const off = !p.front || x < pad || x > W - pad || y < pad || y > H - pad;
+      if (off) {
+        let dx = x - W / 2, dy = y - H / 2;
+        if (!p.front) {
+          dx = -dx;
+          dy = -dy;
+        }
+        const k = Math.min((W / 2 - pad) / Math.max(1e-3, Math.abs(dx)), (H / 2 - pad) / Math.max(1e-3, Math.abs(dy)));
+        x = W / 2 + dx * k;
+        y = H / 2 + dy * k;
+      }
+      this.supplyMark.style.display = '';
+      this.supplyMark.style.transform = `translate(${x}px, ${y}px)`;
+      this.supplyMark.classList.toggle('edge', off);
+      this.supplyLabel.textContent = km(S.dist);
+    }
+
+    if (!near) {
+      this.supplyCard.classList.remove('on');
+      return;
+    }
+    const busy = [S.repairing && 'Repairing', S.refuelling && 'Refuelling', S.rearming && 'Rearming'].filter(Boolean).join(' · ');
+    const meta = S.serving ? busy || 'Fully supplied · ready to fly' : S.inZone ? 'Set down and hold to resupply' : 'Land on the green cross to resupply';
+    const pct = S.serving ? S.progress : 0;
+    this.supplyCard.classList.add('on');
+    const key = `${site.id}|${meta}|${Math.round(pct * 100)}`;
+    if (key === this.lastSupply) return;
+    this.lastSupply = key;
+    this.supplyName.textContent = site.name;
+    this.supplyMeta.textContent = meta;
+    this.supplyBar.style.width = `${pct * 100}%`;
+    this.supplyCard.classList.toggle('serving', S.serving);
   }
 
   private updateLock(f: CombatHudFrame): void {

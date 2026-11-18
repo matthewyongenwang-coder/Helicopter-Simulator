@@ -1,6 +1,7 @@
-import { COMPOUNDS } from '../data/weapons';
+import { COMPOUNDS, SUPPLY } from '../data/weapons';
 import { Biome, ROADS } from '../data/world';
 import { compoundInCell, type CompoundSite } from './compounds';
+import { supplyInCell, type SupplySite } from './supply';
 import { newRoadHit, Roads, type RoadHit } from './roads';
 import { Settlements } from './settlements';
 import { newSample, newSurface, smoothstep, Terrain, type Surface, type TerrainSample } from './terrain';
@@ -28,6 +29,9 @@ export class World {
   private compoundCells = new Map<number, CompoundSite | null>();
   private lastCell = NaN;
   private lastSite: CompoundSite | null = null;
+  private supplyCells = new Map<number, SupplySite | null>();
+  private lastSupplyCell = NaN;
+  private lastSupply: SupplySite | null = null;
 
   constructor(seed: number) {
     this.seed = seed >>> 0;
@@ -87,6 +91,22 @@ export class World {
     return site;
   }
 
+  /** The supply point whose generation cell holds this point, if any. */
+  supplyAt(x: number, z: number): SupplySite | null {
+    const C = SUPPLY.cell;
+    const key = (Math.floor(x / C) + 32768) * 65536 + (Math.floor(z / C) + 32768);
+    if (key === this.lastSupplyCell) return this.lastSupply;
+    let site = this.supplyCells.get(key);
+    if (site === undefined) {
+      site = supplyInCell(this, Math.floor(x / C), Math.floor(z / C));
+      if (this.supplyCells.size > 4000) this.supplyCells.clear();
+      this.supplyCells.set(key, site);
+    }
+    this.lastSupplyCell = key;
+    this.lastSupply = site;
+    return site;
+  }
+
   /** Nearest road to a point. The returned object is reused between calls. */
   roadAt(x: number, z: number): RoadHit | null {
     return this.roads.nearest(x, z, this.hit) ? this.hit : null;
@@ -140,6 +160,19 @@ export class World {
         out.r += (0.5 - out.r) * d;
         out.g += (0.44 - out.g) * d;
         out.b += (0.33 - out.b) * d;
+      }
+    }
+    // Supply points stand in a mown field, clear of trees.
+    const sup = this.supplyAt(x, z);
+    if (sup) {
+      const d = Math.hypot(x - sup.x, z - sup.z);
+      const clear = SUPPLY.propRing + 14;
+      if (d < clear + 25) {
+        out.trees *= smoothstep(clear, clear + 25, d);
+        const k = (1 - smoothstep(clear - 10, clear + 10, d)) * 0.45;
+        out.r += (0.42 - out.r) * k;
+        out.g += (0.47 - out.g) * k;
+        out.b += (0.27 - out.b) * k;
       }
     }
     const hit = this.hit;

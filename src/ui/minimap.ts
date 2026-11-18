@@ -83,6 +83,8 @@ export class Minimap {
   /** Draw the map around (x, z). `heading` in radians (0 = north, clockwise). */
   /** Enemy compounds to mark: position and whether it still stands. */
   compounds: { x: number; z: number; dead: boolean; hot: boolean }[] = [];
+  /** Supply points to mark. */
+  supplies: { x: number; z: number }[] = [];
 
   draw(x: number, z: number, heading: number, last: { x: number; z: number } | null, wind: { x: number; z: number }): void {
     this.frame++;
@@ -200,6 +202,22 @@ export class Minimap {
         c.stroke();
       }
       c.restore();
+    }
+
+    // Supply points: a green tile with a white cross.
+    for (const k of this.supplies) {
+      const px = mx(k.x), py = my(k.z);
+      if (px < -8 || py < -8 || px > S + 8 || py > S + 8) continue;
+      c.fillStyle = '#30d158';
+      c.strokeStyle = 'rgba(0,0,0,0.75)';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.roundRect(px - 5.5, py - 5.5, 11, 11, 3);
+      c.fill();
+      c.stroke();
+      c.fillStyle = '#ffffff';
+      c.fillRect(px - 3.5, py - 1, 7, 2);
+      c.fillRect(px - 1, py - 3.5, 2, 7);
     }
 
     // Last helipad (respawn point).

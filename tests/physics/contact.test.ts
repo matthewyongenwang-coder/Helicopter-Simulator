@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AIRCRAFT } from '../../src/data/aircraft';
+import { AIRCRAFT, AIRCRAFT_ORDER } from '../../src/data/aircraft';
 import { deriveAircraft } from '../../src/sim/derive';
+import { DEG } from '../../src/sim/math';
 import { Warn } from '../../src/sim/types';
 import { deg, hold, holdUntil, inHover, onGround, runUntil, tap, tiltDeg } from './helpers';
 
@@ -61,6 +62,18 @@ describe('landing gear and suspension', () => {
     expect(crash.engine).toBe('failed');
   });
 
+  it('a semi-rough landing (firm, sliding, banked) is survivable in every aircraft', () => {
+    for (const id of AIRCRAFT_ORDER) {
+      const { sim, heli } = inHover(id, deriveAircraft(AIRCRAFT[id]).restHeight + 0.8, {}, 0.05);
+      heli.q.setFromHPR(0, 3 * DEG, 7 * DEG);
+      heli.omega.set(0, 0, 0);
+      heli.vel.set(0, -4.5, -5);
+      sim.run(5);
+      expect(heli.destroyed, id).toBe(false);
+      expect(heli.health, id).toBeGreaterThan(0.5);
+    }
+  });
+
   it('a controlled descent on the collective lands without damage', () => {
     const { sim, heli } = inHover('medium', AC.restHeight + 4);
     // Ease the lever down a little and let it settle onto the ground.
@@ -92,8 +105,15 @@ describe('collisions', () => {
     expect(heli.pos.y).toBeLessThan(6);
   });
 
-  it('a tail strike takes out the tail rotor and the aircraft spins', () => {
+  it('a light tail scrape is survivable', () => {
     const { sim, heli } = inHover('medium', AC.restHeight + 3.2);
+    holdUntil(sim, 'KeyS', () => !heli.tailRotorOk || heli.destroyed, 3);
+    expect(heli.tailRotorOk).toBe(true);
+    expect(heli.destroyed).toBe(false);
+  });
+
+  it('a tail strike takes out the tail rotor and the aircraft spins', () => {
+    const { sim, heli } = inHover('medium', AC.restHeight + 5);
     holdUntil(sim, 'KeyS', () => !heli.tailRotorOk || heli.destroyed, 3);
     expect(heli.tailRotorOk).toBe(false);
     if (!heli.destroyed) {

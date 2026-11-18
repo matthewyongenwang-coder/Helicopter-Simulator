@@ -116,6 +116,13 @@ it. Press **K** to dump flares, which pull most missiles off. Parts of a compoun
 blow up as you hit them, and fuel and ammunition take their neighbours with them. Break it
 below 40 % and the whole compound goes up, then burns for minutes under a column of smoke.
 
+**Supply points** (a green cross on a painted apron, crates and a blinking green beacon;
+green tiles on the minimap, and a green marker on screen for the nearest) stand in open
+fields every few kilometres, well out of reach of the compounds. The helipad you start from
+is one too. Land inside the ring and stay put: after a second the ground crew patches the
+airframe (fully in about 20 s, tail rotor included), fills the tanks and reloads the gun,
+missiles and flares. The card at the top of the screen shows their progress.
+
 ## The world
 
 Every launch gets a random seed, shown at the top left; the same seed always builds the

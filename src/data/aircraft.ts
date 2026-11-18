@@ -136,7 +136,7 @@ const scout: AircraftData = {
     [0, 0.25, 4.6, 0.3, 1],
     [0, 1.0, 4.9, 0.25, 1],
   ],
-  damage: { fragility: 1.35, hardLanding: 2.4, crash: 8.0 },
+  damage: { fragility: 1.35, hardLanding: 3.5, crash: 10.5 },
 };
 
 const utility: AircraftData = {
@@ -170,7 +170,7 @@ const utility: AircraftData = {
     [0, 0.35, 7.6, 0.35, 1],
     [0, 1.9, 8.3, 0.3, 1],
   ],
-  damage: { fragility: 1.0, hardLanding: 2.6, crash: 9.0 },
+  damage: { fragility: 1.0, hardLanding: 3.7, crash: 11.5 },
 };
 
 const medium: AircraftData = {
@@ -203,7 +203,7 @@ const medium: AircraftData = {
     [0, 0.2, 8.9, 0.4, 1],
     [0, 1.8, 9.9, 0.35, 1],
   ],
-  damage: { fragility: 0.8, hardLanding: 3.0, crash: 11.0 },
+  damage: { fragility: 0.8, hardLanding: 4.0, crash: 13.0 },
 };
 
 const heavy: AircraftData = {
@@ -237,7 +237,7 @@ const heavy: AircraftData = {
     [0, 0.6, 12.8, 0.55, 1],
     [0, 2.8, 14.6, 0.45, 1],
   ],
-  damage: { fragility: 0.75, hardLanding: 2.8, crash: 10.0 },
+  damage: { fragility: 0.75, hardLanding: 3.8, crash: 12.5 },
 };
 
 const attack: AircraftData = {
@@ -270,7 +270,7 @@ const attack: AircraftData = {
     [0, 0.3, 8.4, 0.38, 1],
     [0, 2.0, 9.0, 0.32, 1],
   ],
-  damage: { fragility: 0.55, hardLanding: 3.4, crash: 12.8 },
+  damage: { fragility: 0.55, hardLanding: 4.5, crash: 15.0 },
 };
 
 const rescue: AircraftData = {
@@ -303,7 +303,7 @@ const rescue: AircraftData = {
     [0, 0.5, 7.4, 0.38, 1],
     [0, 2.1, 8.4, 0.32, 1],
   ],
-  damage: { fragility: 0.9, hardLanding: 2.8, crash: 10.0 },
+  damage: { fragility: 0.9, hardLanding: 3.8, crash: 12.5 },
 };
 
 export const AIRCRAFT: Record<string, AircraftData> = { scout, utility, medium, heavy, attack, rescue };

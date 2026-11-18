@@ -251,6 +251,28 @@ export class Helicopter {
     }
   }
 
+  /** Ground-crew repairs: restore health, and the tail rotor once the airframe is nearly whole. */
+  repair(amount: number): void {
+    if (this.destroyed || amount <= 0) return;
+    this.health = Math.min(1, this.health + amount);
+    if (this.health >= 0.9) this.tailRotorOk = true;
+  }
+
+  /** Most fuel the tanks can take without going over maximum takeoff weight (never less than what is aboard). */
+  fuelLimit(): number {
+    const d = this.ac.data;
+    return Math.max(this.fuel, Math.min(d.fuel.capacity, d.mass.maxTakeoff - d.mass.empty - d.mass.crew - this.payload));
+  }
+
+  /** Pump fuel in, up to the limit. Returns the kilograms added. */
+  refuel(kg: number): number {
+    if (this.destroyed || kg <= 0) return 0;
+    const add = Math.min(kg, this.fuelLimit() - this.fuel);
+    if (add <= 0) return 0;
+    this.fuel += add;
+    return add;
+  }
+
   /** Force an engine failure (damage, fuel exhaustion, or training). */
   failEngine(): void {
     if (this.engine !== 'off') this.engine = 'failed';
@@ -671,14 +693,17 @@ export class Helicopter {
     }
     if (this.destroyed) return;
     if (kind === PointKind.Gear) {
+      // At or past the crash sink rate the gear collapses; below it a firm landing only dents the airframe.
+      if (speed >= d.damage.crash) this.destroy('Crashed');
       const x = (speed - d.damage.hardLanding) / (d.damage.crash - d.damage.hardLanding);
-      if (x > 0) this.applyDamage((0.1 + 0.9 * Math.pow(Math.min(x, 1.5), 1.6)) / d.gear.points.length, 'Hard landing');
+      if (x > 0) this.applyDamage(((0.08 + 0.7 * Math.pow(x, 1.6)) * d.damage.fragility) / d.gear.points.length, 'Hard landing');
     } else if (kind === PointKind.Rotor) {
       if (this.rotorN <= 0.25 && speed > 2) this.applyDamage(0.2 * d.damage.fragility, 'Rotor damage');
     } else {
       if (speed > TUNING.hull.scuffSpeed) {
-        const x = speed / (0.55 * d.damage.crash);
-        this.applyDamage(0.9 * x * x * d.damage.fragility, kind === PointKind.Tail ? 'Tail strike' : 'Crashed');
+        const x = speed / d.damage.crash;
+        const knock = 0.9 * x * x * d.damage.fragility;
+        this.applyDamage(speed < d.damage.crash ? Math.min(knock, TUNING.hull.maxKnock) : knock, kind === PointKind.Tail ? 'Tail strike' : 'Crashed');
       }
       if (kind === PointKind.Tail && speed > TUNING.damage.tailStrikeSpeed) this.tailRotorOk = false;
     }

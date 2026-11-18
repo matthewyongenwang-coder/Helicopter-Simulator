@@ -129,7 +129,9 @@ export const TUNING = {
     dampingRatio: 0.7,
     friction: 0.6,
     /** Normal impact speed below which hull contact does no damage, m/s. */
-    scuffSpeed: 0.8,
+    scuffSpeed: 2.0,
+    /** Largest share of health one hull knock below crash speed can take. */
+    maxKnock: 0.35,
   },
 
   water: {
@@ -146,7 +148,7 @@ export const TUNING = {
     /** Health below which the engine fails. */
     engineFailBelow: 0.22,
     /** Tail contact speed that takes out the tail rotor, m/s. */
-    tailStrikeSpeed: 2.2,
+    tailStrikeSpeed: 3.2,
   },
 
   gust: {

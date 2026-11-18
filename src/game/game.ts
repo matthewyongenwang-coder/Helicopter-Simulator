@@ -5,6 +5,7 @@ import type { QualityName } from '../data/graphics';
 import { AIRCRAFT_VISUAL } from '../data/aircraftVisual';
 import { CameraRig } from '../render/cameras';
 import { CombatView } from '../render/combatView';
+import { SupplyView } from '../render/supplyView';
 import { Clouds } from '../render/clouds';
 import { Effects } from '../render/effects';
 import { Engine } from '../render/engine';
@@ -22,6 +23,7 @@ import { WorkerPool } from '../world/workerPool';
 import { World } from '../world/world';
 import { Combat, type CombatEvent, type CombatInput, type PlayerState } from './combat';
 import { KeyboardInput } from './input';
+import { Resupply, type SupplyEvent } from './resupply';
 import { WeatherSystem } from './weather';
 import { WorldEnvironment } from './worldEnv';
 
@@ -77,6 +79,10 @@ export class Game {
   readonly combatView: CombatView;
   /** Combat events from this frame, for the HUD and audio. */
   combatEvents: CombatEvent[] = [];
+  /** Supply points and the ground crew; events from this frame. */
+  readonly supply: Resupply;
+  readonly supplyView: SupplyView;
+  supplyEvents: SupplyEvent[] = [];
   /** Mouse trigger (left button held), and one-shot missile and flare requests. */
   gunHeld = false;
   private missileQueued = false;
@@ -154,11 +160,14 @@ export class Game {
     this.effects = new Effects(this.engine);
     this.combat = new Combat(this.world, { hit: (amount, reason, crit) => this.sim.heli.takeHit(amount, reason, crit) });
     this.combatView = new CombatView(this.engine, this.effects, this.combat, (x, z) => this.combat.surface(x, z, 30));
+    this.supply = new Resupply(this.world);
+    this.supplyView = new SupplyView(this.engine, this.supply, (x, z) => Math.max(0, this.world.height(x, z)));
     this.weather = new WeatherSystem(opts.seed, opts.weather ?? 'auto', opts.hour ?? -1);
     this.setupLighting();
     this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
     this.lastPad = this.findSpawn();
     this.combat.home = { x: this.lastPad.x, z: this.lastPad.z };
+    this.setSupplyHome(this.lastPad);
     this.spawn(this.aircraft, this.lastPad);
     window.addEventListener('resize', () => this.engine.resize());
   }
@@ -214,12 +223,18 @@ export class Game {
     this.effects.reset();
     this.combat.arm(data.id);
     this.combatView.reset();
+    this.supply.reset();
     this.gunHeld = this.missileQueued = this.flaresQueued = false;
     this.rig.reset();
     this.flightTime = 0;
     this.padTimer = 0;
     if (altitude === 0) this.lastPad = at;
     this.onSpawn?.();
+  }
+
+  /** The helipad a flight starts from doubles as a supply point. */
+  setSupplyHome(at: SpawnPoint): void {
+    this.supply.setHome(at.x, at.y ?? Math.max(0, this.env.ground(at.x, at.z)), at.z, at.heading);
   }
 
   /** Back to the last helipad the aircraft stood on, in a fresh aircraft. */
@@ -272,7 +287,9 @@ export class Game {
       this.flightTime += dt;
       for (const a of this.sim.takeGameActions()) this.handleAction(a);
       this.trackPad(dt);
+      this.supply.update(dt, h, this.combat);
     } else {
+      this.supply.update(0, h, this.combat);
       // Keys pressed while paused or in the menu still reach the shell (pause, controls…).
       for (const a of this.sim.actions.takePressed()) this.handleAction(a);
     }
@@ -426,6 +443,8 @@ export class Game {
     if (live) c.update(dt, p, inp, true);
     else if (this.mode === 'menu' && dt > 0) c.update(dt, p, inp, false);
     this.combatEvents = c.takeEvents();
+    this.supplyEvents = this.supply.takeEvents();
+    this.supplyView.update(this.paused ? 0 : dt, w.x, w.z);
     this.combatView.update(this.paused ? 0 : dt, this.combatEvents, w.x, w.y, w.z);
     if (this.combatView.kick > 0) {
       this.rig.kick(this.combatView.kick);

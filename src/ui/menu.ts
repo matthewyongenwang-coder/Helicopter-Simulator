@@ -76,6 +76,9 @@ const SPEC_ROWS: [string, (id: string) => string][] = [
   ['Armament', (id) => armamentText(id)],
 ];
 
+/** Rows whose text wraps inside its cell. */
+const WRAP_ROWS = new Set(['Role', 'Armament']);
+
 /** The spawn menu: pick an aircraft, a place to start, a load, and fly. */
 export class Menu {
   isOpen = false;
@@ -256,9 +259,15 @@ export class Menu {
   private renderSpecs(): void {
     const d = AIRCRAFT[this.aircraft];
     const head = el('tr', {}, el('th', {}, ''), ...AIRCRAFT_ORDER.map((id) => el('th', { class: id === this.aircraft ? 'sel' : '' }, AIRCRAFT[id].name)));
-    const body = SPEC_ROWS.map(([label, f]) =>
-      el('tr', {}, el('td', {}, label), ...AIRCRAFT_ORDER.map((id) => el('td', { class: `num${id === this.aircraft ? ' sel' : ''}` }, f(id)))),
-    );
+    // Long text rows wrap, one item per line, so the table keeps to the panel's width.
+    const cell = (label: string, id: string, text: string) => {
+      const wrap = WRAP_ROWS.has(label);
+      const td = el('td', { class: `${wrap ? 'wrap' : 'num'}${id === this.aircraft ? ' sel' : ''}` });
+      if (wrap) td.append(...text.split(' · ').map((part) => el('span', {}, part)));
+      else td.textContent = text;
+      return td;
+    };
+    const body = SPEC_ROWS.map(([label, f]) => el('tr', {}, el('td', {}, label), ...AIRCRAFT_ORDER.map((id) => cell(label, id, f(id)))));
     this.specs.replaceChildren(
       el('div', { class: 'head' }, el('h2', {}, d.name), el('span', { class: 'label' }, `${d.designation} · ${d.role}`)),
       el('p', { class: 'blurb' }, `${d.blurb} Top speed ${d.perf.topSpeedKts} kt (${fmt((d.perf.topSpeedKts * KTS * 3.6))} km/h).`),

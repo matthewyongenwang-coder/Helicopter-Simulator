@@ -243,6 +243,9 @@ export class Combat {
   private lockVisible = false;
   private aimTimer = 0;
   private pending: PendingBlast[] = [];
+  private gunAcc = 0;
+  private flareAcc = 0;
+  private missileAcc = 0;
   private sample = newSample();
   private readonly rand: () => number;
   private v = [0, 0, 0];
@@ -281,6 +284,40 @@ export class Combat {
         p.burst = 0;
       }
     }
+  }
+
+  /** True when every gun, rail and flare bucket is full. */
+  get fullyArmed(): boolean {
+    const L = this.loadout;
+    return this.gunAmmo >= (L.gun?.ammo ?? 0) && this.missilesLeft >= (L.missile?.rails.length ?? 0) && this.flaresLeft >= L.flares;
+  }
+
+  /**
+   * Reload from a supply point over `dt` seconds: the gun and flares fill at a
+   * steady rate, missiles go back on their rails one at a time.
+   */
+  rearm(dt: number, gunTime: number, flareTime: number, missileEvery: number): void {
+    const L = this.loadout;
+    if (L.gun && this.gunAmmo < L.gun.ammo) {
+      this.gunAcc += (L.gun.ammo / gunTime) * dt;
+      const n = Math.floor(this.gunAcc);
+      this.gunAcc -= n;
+      this.gunAmmo = Math.min(L.gun.ammo, this.gunAmmo + n);
+    }
+    if (this.flaresLeft < L.flares) {
+      this.flareAcc += (L.flares / flareTime) * dt;
+      const n = Math.floor(this.flareAcc);
+      this.flareAcc -= n;
+      this.flaresLeft = Math.min(L.flares, this.flaresLeft + n);
+    }
+    const rails = L.missile?.rails.length ?? 0;
+    if (this.missilesLeft < rails) {
+      this.missileAcc += dt;
+      if (this.missileAcc >= missileEvery) {
+        this.missileAcc = 0;
+        this.missilesLeft++;
+      }
+    } else this.missileAcc = 0;
   }
 
   takeEvents(): CombatEvent[] {

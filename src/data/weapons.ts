@@ -191,3 +191,33 @@ export const COMPOUNDS = {
   /** The compound falls when its remaining strength drops to this fraction. */
   breakAt: 0.4,
 };
+
+/** Supply points: where they stand, and how quickly they patch up, refuel and rearm a landed aircraft. */
+export const SUPPLY = {
+  /** One candidate site per cell of this size. */
+  cell: 2800,
+  chance: 0.8,
+  /** Keep well out of reach of every compound's guns. */
+  compoundClear: 2600,
+  roadClear: 30,
+  /** Steepest height change across the landing area, m. */
+  maxRelief: 2.2,
+  /** Land within this distance of the centre to be served. */
+  radius: 30,
+  /** Painted apron, and where the crates and fuel stand (outside the landing zone). */
+  apron: 17,
+  propRing: 36,
+  /** Draw sites within this range. */
+  viewRange: 6000,
+  /** Seconds on the ground, settled, before the crew starts work. */
+  settle: 1,
+  /** Fastest the aircraft may still be moving for the crew to work, m/s. */
+  maxSpeed: 1.2,
+  /** Health restored per second (a wreck-in-waiting is fully patched in 20 s). */
+  repairRate: 0.05,
+  /** Seconds to fill an empty tank, reload the gun, and the flare buckets; and per missile. */
+  refuelTime: 15,
+  gunTime: 10,
+  flareTime: 6,
+  missileEvery: 1.2,
+};

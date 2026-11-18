@@ -118,6 +118,7 @@ menu = new Menu(menuRoot, {
   fly: (id, pad) => {
     if (pad) game.spawn(AIRCRAFT[id], padPoint(pad), 0, 0, loadOf(id));
     else game.spawn(AIRCRAFT[id], home, 300, 0, loadOf(id));
+    game.setSupplyHome(pad ? padPoint(pad) : home);
     startFlying();
   },
   resume: () => startFlying(),
@@ -290,11 +291,14 @@ game.onFrame = (dt) => {
       flash: game.combatView.screenFlash,
       alive: !h.destroyed,
       keys: keyLabels(),
+      supply: game.supply.status,
+      supplyEvents: game.supplyEvents,
     }, dt);
     mapTimer -= dt;
     if (mapTimer <= 0) {
       mapTimer = 0.5;
       hud.minimap.compounds = [...game.combat.compounds.values()].map((c) => ({ x: c.site.x, z: c.site.z, dead: c.destroyed, hot: c.engaged }));
+      hud.minimap.supplies = game.supply.sites;
     }
   }
   combatAudio(dt);
