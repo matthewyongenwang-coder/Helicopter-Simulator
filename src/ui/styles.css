@@ -895,17 +895,55 @@ kbd {
   opacity: 0.8;
 }
 
-.target-card {
+/* Compound and supply cards share a stack under the compass, so they never overlap. */
+.hud-topstack {
+  position: absolute;
+  top: 66px;
   left: 50%;
-  top: calc(35% + 42px);
   transform: translateX(-50%);
-  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.hud-topstack > .hud-panel {
+  position: relative;
+}
+.target-card {
+  min-width: 230px;
   padding: 7px 12px 9px;
   opacity: 0;
-  transition: opacity 140ms ease-out;
+  transform: translateY(-4px);
+  transition: opacity 160ms ease-out, transform 320ms var(--spring);
 }
 .target-card.on {
   opacity: 1;
+  transform: none;
+}
+.target-card .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.target-card .status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--danger);
+  transition: background-color 240ms ease-out;
+}
+.target-card.secured .status {
+  color: #04210d;
+  background: var(--ok);
+}
+.target-card.secured .bar {
+  visibility: hidden;
 }
 .target-card .name {
   font-size: 0.8125rem;
@@ -966,17 +1004,15 @@ kbd {
   color: #b9f5c8;
 }
 .supply-card {
-  left: 50%;
-  top: 12%;
-  transform: translate(-50%, -4px);
   min-width: 230px;
   padding: 7px 12px 9px;
   opacity: 0;
+  transform: translateY(-4px);
   transition: opacity 160ms ease-out, transform 320ms var(--spring);
 }
 .supply-card.on {
   opacity: 1;
-  transform: translate(-50%, 0);
+  transform: none;
 }
 .supply-card .name {
   font-size: 0.8125rem;

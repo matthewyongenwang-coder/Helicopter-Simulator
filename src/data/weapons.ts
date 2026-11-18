@@ -68,8 +68,8 @@ const hellfire = (rails: V3[]): MissileSpec => ({
   burn: 2.4,
   turn: 260,
   life: 13,
-  damage: 300,
-  radius: 16,
+  damage: 600,
+  radius: 22,
   reload: 0.55,
   lockTime: 0.7,
   lockRange: 5000,
@@ -190,6 +190,8 @@ export const COMPOUNDS = {
   dropRange: 8000,
   /** The compound falls when its remaining strength drops to this fraction. */
   breakAt: 0.4,
+  /** Share of a blast's overkill (damage past what a part could take) that counts against the whole compound. */
+  structuralShare: 0.6,
 };
 
 /** Supply points: where they stand, and how quickly they patch up, refuel and rearm a landed aircraft. */

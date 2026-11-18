@@ -92,6 +92,11 @@ export interface CompoundState {
   dist: number;
   /** Some weapon here is in range and shooting. */
   engaged: boolean;
+  /**
+   * Blast damage beyond what the parts it hit could absorb: it shakes the
+   * whole compound, so a heavy warhead is not wasted on a light target.
+   */
+  structural: number;
 }
 
 export const enum Owner {
@@ -386,14 +391,15 @@ export class Combat {
       };
     });
     const maxHp = parts.reduce((s, q) => s + q.hp, 0);
-    const c: CompoundState = { site, parts, hp: maxHp, maxHp, destroyed: false, sees: false, seeTimer: this.rand() * 0.4, dist: Infinity, engaged: false };
+    const c: CompoundState = { site, parts, hp: maxHp, maxHp, structural: 0, destroyed: false, sees: false, seeTimer: this.rand() * 0.4, dist: Infinity, engaged: false };
     this.compounds.set(site.id, c);
     return c;
   }
 
-  /** Damage one part; it may go up, and take the compound with it. */
-  damagePart(c: CompoundState, part: PartState, amount: number, byPlayer: boolean): void {
-    if (part.dead || c.destroyed || amount <= 0) return;
+  /** Damage one part; it may go up, and take the compound with it. Returns the damage the part could not absorb. */
+  damagePart(c: CompoundState, part: PartState, amount: number, byPlayer: boolean): number {
+    if (part.dead || c.destroyed || amount <= 0) return 0;
+    const excess = Math.max(0, amount - part.hp);
     part.hp -= amount;
     const kill = part.hp <= 0;
     if (byPlayer) this.events.push({ type: 'hitConfirm', kill });
@@ -407,7 +413,13 @@ export class Combat {
         this.pending.push({ t: 0.15 + this.rand() * 0.45, x: part.cx, y: part.cy + 1, z: part.cz, damage: t.secondary[0], radius: t.secondary[1], size: 0.7 + t.secondary[1] / 25 });
       }
     }
-    c.hp = c.parts.reduce((s, q) => s + Math.max(0, q.hp), 0);
+    this.recount(c);
+    return excess;
+  }
+
+  private recount(c: CompoundState): void {
+    if (c.destroyed) return;
+    c.hp = Math.max(0, c.parts.reduce((s, q) => s + Math.max(0, q.hp), 0) - c.structural);
     if (c.hp <= COMPOUNDS.breakAt * c.maxHp) this.destroyCompound(c);
   }
 
@@ -429,10 +441,15 @@ export class Combat {
   blast(x: number, y: number, z: number, damage: number, radius: number, byPlayer: boolean): void {
     for (const c of this.active) {
       if (c.destroyed || Math.hypot(c.site.x - x, c.site.z - z) > c.site.half * 1.6 + radius) continue;
+      let excess = 0;
       for (const q of c.parts) {
         if (q.dead) continue;
         const d = this.boxDistance(q, x, y, z);
-        if (d < radius) this.damagePart(c, q, damage * Math.pow(1 - d / radius, 0.8), byPlayer);
+        if (d < radius) excess += this.damagePart(c, q, damage * Math.pow(1 - d / radius, 0.8), byPlayer);
+      }
+      if (excess > 0 && !c.destroyed) {
+        c.structural += excess * COMPOUNDS.structuralShare;
+        this.recount(c);
       }
     }
   }

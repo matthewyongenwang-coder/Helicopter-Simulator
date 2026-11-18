@@ -92,9 +92,18 @@ try {
     g.rig.mode = 'cockpit';
     g.rig.looking = true;
     const t0 = performance.now();
-    let destroyedAt = -1, fired = 0;
+    let destroyedAt = -1, fired = 0, launched = 0, raiding = null;
+    const take = g.combat.takeEvents.bind(g.combat);
+    g.combat.takeEvents = () => {
+      const e = take();
+      launched += e.filter((x) => x.type === 'missileLaunch' && !x.enemy).length;
+      return e;
+    };
+    const card = document.querySelector('.target-card');
+    const cardState = () => ({ on: card.classList.contains('on'), status: card.querySelector('.status').textContent, top: card.getBoundingClientRect().top / innerHeight });
     while (performance.now() - t0 < 45000) {
       const c = g.combat.compounds.get(s.id);
+      if (!raiding && card.classList.contains('on')) raiding = cardState();
       if (c.destroyed) {
         destroyedAt = performance.now() - t0;
         break;
@@ -112,7 +121,9 @@ try {
       } else g.rig.lookYaw += 0.3;
       const t = performance.now() - t0;
       g.gunHeld = t > 1500 && t < 6000;
-      if (g.combat.lock.locked && g.combat.missilesLeft > 0) {
+      // One at a time, as a pilot would: the next once the last has struck.
+      const inFlight = g.combat.missiles.some((m) => !m.enemy && m.alive);
+      if (g.combat.lock.locked && g.combat.missilesLeft > 0 && !inFlight) {
         g.fireMissile();
         fired++;
       }
@@ -123,11 +134,16 @@ try {
       await new Promise((r) => setTimeout(r, 100));
     }
     g.gunHeld = false;
-    return { destroyedAt, fired, ammo: g.combat.gunAmmo };
+    await new Promise((r) => setTimeout(r, 400));
+    const secured = cardState();
+    return { destroyedAt, fired, launched, ammo: g.combat.gunAmmo, raiding, secured };
   }, site);
   check(result.ammo < 600, 'the gun fires', `${600 - result.ammo} rounds`);
   check(result.fired > 0, 'missiles lock and fire', `${result.fired} missiles`);
-  check(result.destroyedAt > 0, 'the compound is destroyed', `${(result.destroyedAt / 1000).toFixed(1)} s`);
+  check(result.destroyedAt > 0, 'the compound is destroyed', `${(result.destroyedAt / 1000).toFixed(1)} s, ${result.launched} missiles launched`);
+  check(result.launched > 0 && result.launched <= 5, 'missiles are decisive: a handful takes a compound down', `${result.launched}`);
+  check(result.raiding?.on && result.raiding.status === 'Raiding' && result.raiding.top < 0.2, 'the compound card sits at the top and reads "Raiding"', JSON.stringify(result.raiding));
+  check(result.secured.on && result.secured.status === 'Secured', 'the card turns to "Secured" when the compound falls', JSON.stringify(result.secured));
 
   // The big one, from outside.
   await page.evaluate(() => {
@@ -146,6 +162,8 @@ try {
   }
   const dead = await page.evaluate((id) => window.__game.combat.compounds.get(id).destroyed, site.id);
   check(dead, 'compound stays a ruin');
+  const cardGone = await page.evaluate(() => !document.querySelector('.target-card').classList.contains('on'));
+  check(cardGone, 'the compound card clears a few seconds after the compound falls');
   // Showcase: watch another compound go up from off its flank.
   const other = await page.evaluate(() => {
     const g = window.__game;

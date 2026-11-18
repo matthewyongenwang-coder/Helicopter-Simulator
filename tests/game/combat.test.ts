@@ -69,6 +69,25 @@ describe('combat', () => {
     expect(combat.destroyedCount).toBe(1);
   });
 
+  it('a missile hit is decisive: two or three bring a compound down', () => {
+    const { combat, p } = setup(1600, 160);
+    run(combat, p, 0.1, () => ({ gun: false, missile: false, flares: false, ray: null }));
+    const c = combat.compounds.get(site.id)!;
+    const m = combat.loadout.missile!;
+    let hits = 0;
+    // Each missile strikes the biggest building still standing.
+    while (!c.destroyed && hits < 10) {
+      const q = c.parts.filter((x) => !x.dead).sort((a, b) => b.type.hp - a.type.hp)[0];
+      combat.blast(q.cx, q.cy, q.cz, m.damage, m.radius, true);
+      run(combat, p, 1.2, () => ({ gun: false, missile: false, flares: false, ray: null }));
+      hits++;
+    }
+    expect(c.destroyed).toBe(true);
+    expect(hits).toBeLessThanOrEqual(3);
+    // One hit alone is not enough: the compound takes a second.
+    expect(hits).toBeGreaterThan(1);
+  });
+
   it('the gun wears a compound down', () => {
     const { combat, p } = setup(700, 80);
     const tgt = site.parts[0];

@@ -1,4 +1,4 @@
-import { compoundHealth, type Combat, type CombatEvent } from '../game/combat';
+import { compoundHealth, type Combat, type CombatEvent, type CompoundState } from '../game/combat';
 import type { SupplyEvent, SupplyStatus } from '../game/resupply';
 import { el } from './menu';
 
@@ -49,7 +49,8 @@ export class CombatHud {
   private lockBox = el('div', { class: 'lockbox', 'aria-hidden': 'true' }, el('span', {}, 'LOCK'));
   private markers: { root: HTMLElement; label: HTMLElement }[] = [];
   private card = el('div', { class: 'target-card hud-panel', 'aria-live': 'polite' });
-  private cardName = el('div', { class: 'name' });
+  private cardName = el('span', { class: 'name' });
+  private cardStatus = el('span', { class: 'status' });
   private cardMeta = el('div', { class: 'meta num' });
   private cardBar = el('i', {});
   private panel = el('div', { class: 'hud-weapons hud-panel' });
@@ -68,6 +69,12 @@ export class CombatHud {
   private hurt = 0;
   private lastPanel = '';
   private lastCard = '';
+  /** The compound on the card, and how much longer the card stays up without fresh attention. */
+  private cardFor: CompoundState | null = null;
+  private cardTimer = 0;
+  /** Top-of-screen stack: the compound card above the supply card. */
+  private top = el('div', { class: 'hud-topstack' });
+  private hideTimers = new WeakMap<HTMLElement, number>();
   private toastTimer = 0;
 
   constructor(root: HTMLElement) {
@@ -91,10 +98,12 @@ export class CombatHud {
       this.markers.push({ root: m, label });
       root.append(m);
     }
-    this.card.append(this.cardName, this.cardMeta, el('div', { class: 'bar' }, this.cardBar));
+    this.card.append(el('div', { class: 'head' }, this.cardName, this.cardStatus), this.cardMeta, el('div', { class: 'bar' }, this.cardBar));
     this.supplyMark.append(this.supplyLabel);
     this.supplyCard.append(this.supplyName, this.supplyMeta, el('div', { class: 'bar' }, this.supplyBar));
-    root.append(this.flash, this.vignette, this.reticle, this.lockBox, this.supplyMark, this.card, this.supplyCard, this.panel, this.toast);
+    this.card.style.display = this.supplyCard.style.display = 'none';
+    this.top.append(this.card, this.supplyCard);
+    root.append(this.flash, this.vignette, this.reticle, this.lockBox, this.supplyMark, this.top, this.panel, this.toast);
   }
 
   /** Show a short message in the middle of the screen. */
@@ -114,7 +123,12 @@ export class CombatHud {
         this.hitTimer = e.kill ? 0.3 : 0.14;
         this.hitMark.classList.toggle('kill', e.kill);
       } else if (e.type === 'playerHit') this.hurt = Math.min(1, this.hurt + (e.missile ? 1 : 0.35 + e.amount * 8));
-      else if (e.type === 'compoundDestroyed') this.say(`${e.compound.site.name} destroyed`, 'ok');
+      else if (e.type === 'compoundDestroyed') {
+        this.say(`${e.compound.site.name} secured`, 'ok');
+        // Keep its card up a few seconds to show it changing hands.
+        this.cardFor = e.compound;
+        this.cardTimer = 4;
+      }
       else if (e.type === 'empty') {
         const msg = e.weapon === 'gun' ? 'Gun empty' : e.weapon === 'missile' ? (c.loadout.missile ? 'No missiles left' : 'No missiles on this aircraft') : 'No flares left';
         // Point the way to a reload, once in a while.
@@ -157,7 +171,7 @@ export class CombatHud {
 
     this.updateLock(f);
     this.updateMarkers(f);
-    this.updateCard(f);
+    this.updateCard(f, dt);
     this.updatePanel(f);
     this.updateSupply(f);
   }
@@ -190,13 +204,13 @@ export class CombatHud {
     }
 
     if (!near) {
-      this.supplyCard.classList.remove('on');
+      this.shown(this.supplyCard, false);
       return;
     }
     const busy = [S.repairing && 'Repairing', S.refuelling && 'Refuelling', S.rearming && 'Rearming'].filter(Boolean).join(' · ');
     const meta = S.serving ? busy || 'Fully supplied · ready to fly' : S.inZone ? 'Set down and hold to resupply' : 'Land on the green cross to resupply';
     const pct = S.serving ? S.progress : 0;
-    this.supplyCard.classList.add('on');
+    this.shown(this.supplyCard, true);
     const key = `${site.id}|${meta}|${Math.round(pct * 100)}`;
     if (key === this.lastSupply) return;
     this.lastSupply = key;
@@ -253,23 +267,61 @@ export class CombatHud {
     });
   }
 
-  private updateCard(f: CombatHudFrame): void {
-    const c = f.combat.aim.compound ?? f.combat.lock.compound;
-    if (!c || !f.alive) {
-      this.card.classList.remove('on');
+  /**
+   * The compound card at the top of the screen: up while the reticle is on a
+   * compound or a missile is locked to one, for a moment after, and for a few
+   * seconds once it falls. "Raiding" while it stands, "Secured" once it is down.
+   */
+  private updateCard(f: CombatHudFrame, dt: number): void {
+    const C = f.combat;
+    const live = C.aim.compound ?? (C.lock.locked ? C.lock.compound : null);
+    if (live && !live.destroyed && f.alive) {
+      if (this.cardFor !== live && !(this.cardFor?.destroyed && this.cardTimer > 2.5)) this.cardFor = live;
+      if (this.cardFor === live) this.cardTimer = Math.max(this.cardTimer, 1.5);
+    }
+    this.cardTimer -= dt;
+    const c = this.cardFor;
+    if (!c || this.cardTimer <= 0 || !f.alive) {
+      this.shown(this.card, false);
+      if (this.cardTimer <= 0) this.cardFor = null;
       return;
     }
-    const part = f.combat.aim.part ?? f.combat.lock.part;
+    const secured = c.destroyed;
+    const part = secured ? null : C.aim.compound === c ? C.aim.part : C.lock.compound === c ? C.lock.part : null;
     const health = compoundHealth(c);
     const d = Math.hypot(c.site.x - f.x, c.site.z - f.z);
-    const key = `${c.site.id}|${part?.type.name}|${Math.round(health * 100)}|${Math.round(d / 50)}`;
-    this.card.classList.add('on');
+    this.shown(this.card, true);
+    const key = `${c.site.id}|${secured}|${part?.type.name}|${Math.round(health * 100)}|${Math.round(d / 50)}`;
     if (key === this.lastCard) return;
     this.lastCard = key;
     this.cardName.textContent = c.site.name;
-    this.cardMeta.textContent = `${part ? `${part.type.name} · ` : ''}${km(d)}`;
+    this.cardStatus.textContent = secured ? 'Secured' : 'Raiding';
+    this.card.classList.toggle('secured', secured);
+    this.cardMeta.textContent = secured ? `Defences down · ${km(d)}` : `${part ? `${part.type.name} · ` : ''}${km(d)}`;
     this.cardBar.style.width = `${health * 100}%`;
     this.cardBar.className = health > 0.5 ? '' : health > 0.2 ? 'mid' : 'low';
+  }
+
+  /** Fade a top card in or out; a hidden card leaves the stack so the other moves up. */
+  private shown(node: HTMLElement, on: boolean): void {
+    const pending = this.hideTimers.get(node);
+    if (on) {
+      if (pending) {
+        clearTimeout(pending);
+        this.hideTimers.delete(node);
+      }
+      if (node.style.display === 'none') {
+        node.style.display = '';
+        void node.offsetWidth;
+      }
+      node.classList.add('on');
+    } else if (node.classList.contains('on')) {
+      node.classList.remove('on');
+      this.hideTimers.set(node, window.setTimeout(() => {
+        node.style.display = 'none';
+        this.hideTimers.delete(node);
+      }, 200));
+    }
   }
 
   private updatePanel(f: CombatHudFrame): void {

@@ -115,6 +115,10 @@ SAM launches you hear a fast warning tone and see a red tick around the reticle 
 it. Press **K** to dump flares, which pull most missiles off. Parts of a compound burn and
 blow up as you hit them, and fuel and ammunition take their neighbours with them. Break it
 below 40 % and the whole compound goes up, then burns for minutes under a column of smoke.
+A missile's blast also shakes the whole compound, so two or three well-placed missiles bring
+one down. Put the reticle on a compound (or lock a missile onto it) and a card at the top of
+the screen names it and shows its strength, marked **Raiding** while it stands and
+**Secured** once it falls.
 
 **Supply points** (a green cross on a painted apron, crates and a blinking green beacon;
 green tiles on the minimap, and a green marker on screen for the nearest) stand in open
