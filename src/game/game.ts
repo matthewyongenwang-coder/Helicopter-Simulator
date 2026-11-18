@@ -113,6 +113,11 @@ export class Game {
   lastLoad: SpawnLoad = {};
   landingLightOn = false;
 
+  /** White-phosphor night-vision goggles. */
+  get nightVision(): boolean {
+    return this.engine.nightVision.enabled;
+  }
+
   /** Hooks for the UI and audio layers. */
   onFrame: ((dt: number) => void) | null = null;
   onAction: ((action: Action) => void) | null = null;
@@ -325,7 +330,7 @@ export class Game {
     this.water.update(this.sky.daylight);
     this.updateEnvironmentMap(dt);
     this.onFrame?.(dt);
-    e.render();
+    e.render(dt, this.sky.daylight);
     if (this.frames % 6 === 0 && this.hud.classList.contains('on')) this.drawDebug();
   }
 
@@ -552,6 +557,7 @@ export class Game {
   private handleAction(a: Action): void {
     if (a === 'cameraNext' && this.mode === 'fly') this.rig.next();
     else if (a === 'landingLight') this.landingLightOn = !this.landingLightOn;
+    else if (a === 'nightVision') this.engine.nightVision.toggle();
     else if (a === 'respawn' && this.mode === 'fly') this.respawn();
     else if (a === 'fireMissile') this.fireMissile();
     else if (a === 'flares') this.releaseFlares();

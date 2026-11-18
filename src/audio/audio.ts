@@ -32,7 +32,7 @@ export interface AudioFrame {
  *   turbine: two detuned tones at the gas-generator frequency and a hiss
  *   gearbox: a filtered sawtooth rumble
  *   wind, rain: filtered noise
- *   alerts:  low-rotor horn, master caution chime, autohover tones
+ *   alerts:  master caution chime, autohover tones
  *   events:  impacts, explosion, thunder
  */
 export class FlightAudio {
@@ -59,7 +59,6 @@ export class FlightAudio {
     windFilter: BiquadFilterNode;
     rainGain: GainNode;
     rainFilter: BiquadFilterNode;
-    hornGain: GainNode;
   } | null = null;
   private aircraft: AircraftData | null = null;
   private visual: AircraftVisual | null = null;
@@ -68,7 +67,6 @@ export class FlightAudio {
   private ng = 0;
   private prevWarn = 0;
   private prevAuto = false;
-  private hornPhase = 0;
   private muted = false;
 
   get running(): boolean {
@@ -204,11 +202,8 @@ export class FlightAudio {
     const rainFilter = this.filter('highpass', 1800, 0.4);
     this.noiseSource().connect(rainFilter).connect(rainGain).connect(this.master);
 
-    // Low rotor horn (gated in update).
-    const hornGain = this.gain(0);
-    this.osc('square', 620).connect(this.filter('lowpass', 2200)).connect(hornGain).connect(this.master);
 
-    this.p = { slapOsc, slapDepth, slapGain, slapFilter, thumpOsc, thumpGain, turbA, turbB, turbGain, hissGain, hissFilter, rumble, rumbleGain, windGain, windFilter, rainGain, rainFilter, hornGain };
+    this.p = { slapOsc, slapDepth, slapGain, slapFilter, thumpOsc, thumpGain, turbA, turbB, turbGain, hissGain, hissFilter, rumble, rumbleGain, windGain, windFilter, rainGain, rainFilter };
   }
 
   update(f: AudioFrame): void {
@@ -254,13 +249,8 @@ export class FlightAudio {
     // Inside the cabin the outside world is muffled.
     set(this.outside.frequency, f.cockpit ? 2400 : 18000, 0.1);
 
-    // Low rotor horn: pulsed tone while the warning stands.
-    const low = (f.warnings & Warn.LowRotorRpm) !== 0 && !f.destroyed && !f.paused;
-    this.hornPhase = (this.hornPhase + f.dt * 3.2) % 1;
-    set(p.hornGain.gain, low && this.hornPhase < 0.55 ? 0.05 : 0, 0.01);
-
     // Master caution on any new warning, distinct tones for autohover on and off.
-    const serious = Warn.EngineOut | Warn.OverTorque | Warn.VortexRing | Warn.BladeStall | Warn.Overspeed | Warn.SinkRate | Warn.TailRotor | Warn.Damage | Warn.LowFuel;
+    const serious = Warn.EngineOut | Warn.SinkRate | Warn.TailRotor | Warn.Damage | Warn.LowFuel;
     const fresh = f.warnings & serious & ~this.prevWarn;
     if (fresh && !f.paused && !f.destroyed) this.chime([880, 660], 0.09, 0.05);
     this.prevWarn = f.warnings;

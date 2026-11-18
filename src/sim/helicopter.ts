@@ -97,7 +97,6 @@ export class Helicopter {
   qEng = 0;
   private startClock = 0;
   private startFromN = 0;
-  private govInt = 0;
   /** Rotor azimuth for rendering, rad. */
   rotorAngle = 0;
 
@@ -131,10 +130,7 @@ export class Helicopter {
   readonly att: Attitude = { heading: 0, pitch: 0, roll: 0 };
 
   private rng: () => number;
-  private buffetPhase = 0;
   private failTimer = 0;
-  /** Accumulated over-torque exposure, s. */
-  overTorque = 0;
   private readonly ro = {} as RotorOut;
   private readonly fs: FlightState;
 
@@ -177,7 +173,7 @@ export class Helicopter {
     this.tel = {
       time: 0, mass: this.mass(), airspeed: 0, groundSpeed: 0, verticalSpeed: 0, radarAlt: 0, baroAlt: 0,
       heading: 0, pitch: 0, roll: 0, yawRate: 0, rotorRpm: 0, torque: 0, collective: 0, pedal: 0, thrust: 0, power: 0,
-      gLoad: 1, onGround: false, gearLoad: 0, inGroundEffect: 0, translationalLift: 0, vortexRing: 0, bladeStall: 0,
+      gLoad: 1, onGround: false, gearLoad: 0, inGroundEffect: 0, translationalLift: 0, vortexRing: 0,
       vibration: 0, fuel: this.fuel, fuelFraction: 1, fuelFlow: 0, health: 1, warnings: 0,
       surfaceKind: SurfaceKind.Terrain, lastImpact: 0, impactCount: 0,
     };
@@ -202,8 +198,6 @@ export class Helicopter {
     this.destroyed = false;
     this.destroyedReason = '';
     this.pedalTrim = 0;
-    this.govInt = 0;
-    this.overTorque = 0;
     this.brake = true;
     this.autohover.reset();
     this.autohover.engaged = false;
@@ -354,21 +348,25 @@ export class Helicopter {
     this.theta += (thetaCmd - this.theta) * lagAlpha(dt, TUNING.rotor.servoTau);
 
     // --- Main rotor -----------------------------------------------------------
+    const E = TUNING.engine;
+    const Qr = ac.torqueRated;
     const omega = this.rotorN * ac.omega0;
     const ro = rotorAero(ac, this.theta, omega, rho, vc, vt, this.vi, hubAgl, this.ro);
-    const RB = TUNING.retreatingBlade;
-    const stallIndex = ro.mu + RB.loadingGain * Math.max(0, ro.ctSigma - RB.nominalLoading) * ro.mu;
-    const rbs = this.rotorN > 0.5 ? smoothstep(ac.muStall, ac.muStall + RB.width, stallIndex) : 0;
-    this.buffetPhase += dt * (11 + 7 * this.rng());
-    const buffet = Math.sin(this.buffetPhase) * (TUNING.vortexRing.buffet * ro.vortexRing + 0.06 * rbs);
-    let thrust = ro.thrust * (1 - RB.thrustLoss * rbs) * (1 + buffet);
+    const powerFactor = this.health >= TUNING.damage.powerLossBelow ? 1 : 0.45 + 0.55 * (this.health / TUNING.damage.powerLossBelow);
+    const pAvail = ac.powerMax * Math.pow(rhoRatio, TUNING.atmosphere.powerLapse) * powerFactor;
+    let thrust = ro.thrust;
+    let mainPower = this.rotorOk ? ro.power : 0;
+    // Forgiving powerplant: asking for more than the engine has never droops the
+    // rotor or wears the transmission. Lift simply tops out at what the power buys.
+    const pCap = E.transientPower * pAvail;
+    if (this.engine === 'running' && mainPower > pCap) {
+      thrust *= Math.pow(pCap / mainPower, 2 / 3);
+      mainPower = pCap;
+    }
     if (!this.rotorOk) thrust = 0;
     this.vi += (ro.viTarget - this.vi) * lagAlpha(dt, TUNING.rotor.inflowTau);
 
     // --- Engine, governor and rotor speed --------------------------------------
-    const E = TUNING.engine;
-    const Qr = ac.torqueRated;
-    const mainPower = this.rotorOk ? ro.power * (1 + 0.6 * rbs) : 0;
     let qAero = 0;
     if (omega > 1) {
       qAero = mainPower / omega;
@@ -377,8 +375,6 @@ export class Helicopter {
     let qLoss = this.rotorN > 1e-4 ? E.friction * Qr : 0;
     if ((this.engine === 'off' || this.engine === 'failed') && this.rotorN < E.brakeBelow && tel.onGround) qLoss += E.rotorBrake * Qr;
 
-    const powerFactor = this.health >= TUNING.damage.powerLossBelow ? 1 : 0.45 + 0.55 * (this.health / TUNING.damage.powerLossBelow);
-    const pAvail = ac.powerMax * Math.pow(rhoRatio, TUNING.atmosphere.powerLapse) * powerFactor;
     let qCmd = 0;
     if (this.engine === 'starting') {
       this.startClock += dt;
@@ -387,28 +383,19 @@ export class Helicopter {
       qCmd = clamp(qAero + qLoss + E.governorKp * (nRef - this.rotorN) * Qr, 0, ac.startTorque);
       if (this.rotorN >= E.flyHandover) {
         this.engine = 'running';
-        this.govInt = 0;
       }
     } else if (this.engine === 'running') {
-      const err = 1 - this.rotorN;
-      const qLimit = Math.min(E.torqueLimit * Qr, (E.transientPower * pAvail) / Math.max(omega, 0.6 * ac.omega0));
-      const qWant = qAero + qLoss + (E.governorKp * err + this.govInt) * Qr;
-      qCmd = clamp(qWant, 0, qLimit);
-      // Integrate only while the governor is in authority (no wind-up at the stops).
-      if (qWant === qCmd || (qWant < 0 && err > 0) || (qWant > qLimit && err < 0)) {
-        this.govInt = clamp(this.govInt + E.governorKi * err * dt, -0.25, 0.25);
-      }
+      // An ideal governor: the engine supplies whatever the rotor asks for.
+      qCmd = Math.max(0, qAero + qLoss);
     }
     this.qEng += (qCmd - this.qEng) * lagAlpha(dt, this.engine === 'off' || this.engine === 'failed' ? 0.25 : d.engine.responseTau);
-    this.rotorN = Math.max(0, this.rotorN + ((this.qEng - qAero - qLoss) / (ac.rotorInertia * ac.omega0)) * dt);
+    if (this.engine === 'running') {
+      // Rotor speed is held: it eases up to 100 % after the start and stays there.
+      this.rotorN += (1 - this.rotorN) * lagAlpha(dt, 0.4);
+    } else {
+      this.rotorN = Math.max(0, this.rotorN + ((this.qEng - qAero - qLoss) / (ac.rotorInertia * ac.omega0)) * dt);
+    }
     this.rotorAngle = (this.rotorAngle + omega * dt) % (Math.PI * 2);
-    if (this.rotorN > E.overspeed && this.rotorOk) this.applyDamage(0.25 * dt * d.damage.fragility, 'rotor overspeed');
-
-    // Sustained over-torque wears the transmission.
-    const over = this.qEng / Qr - 1.02;
-    if (over > 0) this.overTorque = Math.min(this.overTorque + (dt * over) / (E.transientPower - 1.02), E.overTorqueSeconds + 1);
-    else this.overTorque = Math.max(0, this.overTorque - 0.25 * dt);
-    if (this.overTorque > E.overTorqueSeconds) this.applyDamage(E.overTorqueDamage * d.damage.fragility * dt, 'Transmission failure');
 
     // Fuel.
     const enginePower = this.qEng * omega;
@@ -444,25 +431,19 @@ export class Helicopter {
     M.x = (ac.Ixx * (cmd.wx - w.x) * auth) / d.handling.attTau;
     M.z = (ac.Izz * (cmd.wz - w.z) * auth) / d.handling.attTau;
 
-    // Yaw: tail rotor against engine torque, plus the fin.
+    // Yaw: a working tail rotor cancels engine torque by itself, so the pedals only
+    // turn the nose. Without one, engine torque spins the fuselage.
     const kr = ac.Iyy / d.handling.yawTau;
-    const pStatic = ac.pedalHover + ac.pedalSlope * (this.collective - ac.hoverCollective) + this.pedalTrim;
-    const pRate = (kr * (cmd.wy - w.y)) / (ac.tailTorqueMax * d.tail.lowSpeedAuthority);
-    const pedal = clamp(pStatic + pRate, -0.7, 1);
+    const yawTorque = kr * (cmd.wy - w.y) * auth;
+    const pedal = clamp((yawTorque + this.qEng) / ac.tailTorqueMax, -0.7, 1);
     const vTailX = vb.x + w.y * d.tail.arm;
     const finTorque = -0.5 * rho * ac.finArea * airspeed * vTailX * d.tail.arm;
-    M.y = ac.tailTorqueMax * tailEffect * pedal - this.qEng + finTorque;
+    M.y = (this.tailRotorOk ? yawTorque : -this.qEng) + finTorque;
     // Small aerodynamic damping so a dead rotor does not leave the body spinning forever.
     const aeroDamp = 0.02 * rho * (airspeed + 5);
     M.x -= ac.Ixx * aeroDamp * w.x * 0.1;
     M.y -= ac.Iyy * aeroDamp * w.y * 0.1;
     M.z -= ac.Izz * aeroDamp * w.z * 0.1;
-
-    // Retreating-blade stall: roll toward the retreating side, pitch up.
-    if (rbs > 0) {
-      M.x += (ac.Ixx * rbs * RB.pitchRate * auth) / d.handling.attTau;
-      M.z += (ac.Izz * rbs * RB.rollRate * auth) / d.handling.attTau;
-    }
 
     // Gusts: a vertical-wind difference across the disc rolls and pitches the aircraft.
     const gw = this.wind;
@@ -644,30 +625,21 @@ export class Helicopter {
     tel.inGroundEffect = clamp((1 - ro.groundFactor) / 0.22, 0, 1);
     tel.translationalLift = this.rotorN > 0.5 ? smoothstep(0.5, 1.6, ro.vtBar) : 0;
     tel.vortexRing = ro.vortexRing;
-    tel.bladeStall = rbs;
-    tel.vibration = clamp(ro.vortexRing * 0.8 + rbs + (1 - this.health) * 0.35 + (this.rotorN > 0.3 && !this.tailRotorOk ? 0.3 : 0), 0, 1);
+    tel.vibration = clamp((1 - this.health) * 0.35 + (this.rotorN > 0.3 && !this.tailRotorOk ? 0.3 : 0), 0, 1);
     tel.fuel = this.fuel;
     tel.fuelFraction = this.fuel / d.fuel.capacity;
     tel.fuelFlow = fuelFlow;
     tel.health = this.health;
 
     let warn = 0;
-    const running = this.engine === 'running';
     const flying = !anyGear || gearForce < 0.5 * weight;
-    if (this.rotorN < E.greenMin && (flying ? this.rotorN > 0.05 || !anyGear : running && this.collective > 0.2)) warn |= Warn.LowRotorRpm;
-    if (this.rotorN > E.greenMax) warn |= Warn.HighRotorRpm;
-    if (tel.torque > 1.02) warn |= Warn.OverTorque;
     if (tel.fuelFraction < 0.12) warn |= Warn.LowFuel;
     if (this.engine === 'failed' || (this.engine === 'off' && flying && this.rotorN > 0.2)) warn |= Warn.EngineOut;
-    if (ro.vortexRing > 0.25) warn |= Warn.VortexRing;
-    if (rbs > 0.15) warn |= Warn.BladeStall;
-    if (airspeed > ac.vne) warn |= Warn.Overspeed;
     if (flying && this.vel.y < -6 && tel.radarAlt < 12 * -this.vel.y && tel.radarAlt < 150) warn |= Warn.SinkRate;
     if (!this.tailRotorOk) warn |= Warn.TailRotor;
     if (this.engine === 'starting' && this.collective > 0.12) warn |= Warn.LowerCollective;
     if (this.health < 0.6) warn |= Warn.Damage;
     if (this.autohover.engaged && !this.autohover.active && !anyGear) warn |= Warn.AutohoverUnavailable;
-    if (mass > d.mass.maxTakeoff) warn |= Warn.Overweight;
     tel.warnings = warn;
   }
 

@@ -98,47 +98,24 @@ describe('rotor aerodynamics', () => {
     expect(torque / n).toBeLessThan(0.85 * AC.computed.hoverPowerFraction);
   });
 
-  it('vortex ring state: a steep powered descent loses thrust, and airspeed is the way out', () => {
+  it('a steep powered descent is arrested by full collective: no vortex ring state', () => {
     const { sim, heli } = inHover('medium', 900);
     hold(sim, 'ShiftLeft', 0.9);
     runUntil(sim, () => heli.vel.y < -8, 20);
-    // Pull the lever all the way up. In clear air this would climb hard.
     hold(sim, 'Space', 2.5);
     expect(heli.collective).toBe(1);
-    let maxRing = 0, warned = false;
-    sim.run(2, () => {
-      maxRing = Math.max(maxRing, heli.tel.vortexRing);
-      if (heli.tel.warnings & Warn.VortexRing) warned = true;
-    });
-    expect(maxRing).toBeGreaterThan(0.6);
-    expect(warned).toBe(true);
-    expect(heli.vel.y).toBeLessThan(-6); // full collective and still falling
-    expect(heli.tel.groundSpeed).toBeLessThan(3);
-
-    // Nose down to pick up speed and the ring clears; level off again and it climbs away.
-    hold(sim, 'KeyW', 0.8);
-    const clear = runUntil(sim, () => heli.tel.vortexRing < 0.02 && heli.tel.groundSpeed > 14, 8);
-    expect(clear).toBeLessThan(4);
-    holdUntil(sim, 'KeyS', () => deg(heli.tel.pitch) > -6, 3);
-    const t = runUntil(sim, () => heli.vel.y > 1, 12);
-    expect(t).toBeLessThan(12);
-    expect(heli.tel.vortexRing).toBe(0);
+    const t = runUntil(sim, () => heli.vel.y > 0, 6);
+    expect(t).toBeLessThan(4);
+    expect(heli.tel.groundSpeed).toBeLessThan(3); // straight back up, no airspeed needed
   });
 
-  it('retreating-blade stall: past VNE it loses lift, rolls left and pitches up', () => {
+  it('past VNE it flies on: no retreating-blade stall, roll-off or warning', () => {
     const { sim, heli } = inHover('medium', 500, { speed: AC.vne + 14 }, 0.1);
-    expect(heli.tel.bladeStall).toBeGreaterThan(0.2);
-    expect(heli.tel.warnings & Warn.BladeStall).toBeTruthy();
-    expect(heli.tel.warnings & Warn.Overspeed).toBeTruthy();
     const roll0 = deg(heli.tel.roll), pitch0 = deg(heli.tel.pitch);
     sim.run(1.5);
-    expect(deg(heli.tel.roll)).toBeLessThan(roll0 - 4);
-    expect(deg(heli.tel.pitch)).toBeGreaterThan(pitch0 + 2);
-    // Below VNE there is none.
-    const slow = inHover('medium', 500, { speed: 0.8 * AC.vne }, 0.1);
-    expect(slow.heli.tel.bladeStall).toBe(0);
-    slow.sim.run(1.5);
-    expect(Math.abs(deg(slow.heli.tel.roll))).toBeLessThan(0.5);
+    expect(Math.abs(deg(heli.tel.roll) - roll0)).toBeLessThan(1);
+    expect(Math.abs(deg(heli.tel.pitch) - pitch0)).toBeLessThan(2);
+    expect(heli.tel.warnings).toBe(0);
   });
 
   it('top speed in level flight at rated power matches the listed figure', () => {
@@ -165,26 +142,22 @@ describe('rotor aerodynamics', () => {
 });
 
 describe('engine, power and weight limits', () => {
-  it('overpitching droops the rotor: the engine cannot supply unlimited power', () => {
+  it('full collective at max weight never droops the rotor or hurts the transmission', () => {
     const { sim, heli } = inHover('medium', 60, { payload: 3000 }); // close to max gross weight
-    sim.run(2);
-    expect(heli.rotorN).toBeGreaterThan(0.99);
     hold(sim, 'Space', 2);
     expect(heli.collective).toBe(1);
-    let minRpm = 1, warned = false, maxTorque = 0;
-    sim.run(6, () => {
+    let minRpm = 1, warnings = 0;
+    sim.run(30, () => {
       minRpm = Math.min(minRpm, heli.rotorN);
-      maxTorque = Math.max(maxTorque, heli.tel.torque);
-      if (heli.tel.warnings & Warn.LowRotorRpm) warned = true;
+      warnings |= heli.tel.warnings;
     });
-    expect(maxTorque).toBeGreaterThan(1.1); // the engine is giving everything it has
-    expect(maxTorque).toBeLessThanOrEqual(TUNING.engine.torqueLimit + 1e-6);
-    expect(minRpm).toBeLessThan(TUNING.engine.greenMin); // and the rotor still slows down
-    expect(warned).toBe(true);
-    expect(heli.tel.warnings & Warn.OverTorque).toBeTruthy();
+    expect(minRpm).toBeGreaterThan(0.995);
+    expect(heli.health).toBe(1);
+    expect(warnings).toBe(0);
+    expect(heli.vel.y).toBeGreaterThan(1); // and it is climbing on everything the engine has
   });
 
-  it('cannot lift off above its maximum gross weight', () => {
+  it('far above its maximum gross weight it cannot climb out of ground effect', () => {
     const over = onGround('medium', { payload: 7500 });
     expect(over.heli.mass()).toBeGreaterThan(AIRCRAFT.medium.mass.maxTakeoff * 1.3);
     startEngine(over.sim);
@@ -192,8 +165,8 @@ describe('engine, power and weight limits', () => {
     let maxAlt = 0;
     over.sim.run(12, () => (maxAlt = Math.max(maxAlt, over.heli.tel.radarAlt)));
     expect(over.heli.collective).toBe(1);
-    expect(maxAlt).toBeLessThan(0.05);
-    expect(over.heli.tel.warnings & Warn.Overweight).toBeTruthy();
+    // Full power buys a skim a metre or so off the ground, never a climb.
+    expect(maxAlt).toBeLessThan(3);
 
     const std = onGround('medium');
     startEngine(std.sim);
@@ -279,14 +252,14 @@ describe('autorotation', () => {
     tap(sim, 'KeyJ');
     sim.run(4);
     expect(heli.rotorN).toBeLessThan(0.75);
-    expect(heli.tel.warnings & Warn.LowRotorRpm).toBeTruthy();
+    expect(heli.tel.warnings & Warn.EngineOut).toBeTruthy();
   });
 
-  it('losing engine torque yaws the nose left (the pedal trim is now too much)', () => {
+  it('losing the engine does not yaw the nose: the tail rotor looks after torque', () => {
     const { sim, heli } = inHover('medium', 800);
     tap(sim, 'KeyJ');
     sim.run(1.5);
-    expect(heli.tel.yawRate).toBeLessThan(-0.05);
+    expect(Math.abs(heli.tel.yawRate)).toBeLessThan(0.02);
   });
 });
 

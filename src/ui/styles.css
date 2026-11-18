@@ -442,7 +442,7 @@ select:focus-visible {
 }
 .hud-seed {
   left: 16px;
-  top: 14px;
+  top: 76px;
   padding: 6px 11px;
   font-size: 0.75rem;
   color: var(--dim);
@@ -455,6 +455,86 @@ select:focus-visible {
   letter-spacing: 0.06em;
   color: var(--text);
 }
+/* Time and weather card, top left. */
+.hud-sky {
+  left: 16px;
+  top: 14px;
+  height: 54px;
+  box-sizing: border-box;
+  padding: 7px 12px 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hud-sky .dial {
+  flex: none;
+}
+.hud-sky .sky-time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 62px;
+}
+.hud-sky .clock {
+  font-size: 1.1875rem;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.hud-sky .phase,
+.hud-sky .wx-sub {
+  font-size: 0.6875rem;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  color: var(--dim);
+}
+.hud-sky .sky-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 0;
+  background: var(--stroke);
+}
+.hud-sky .sky-wx {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hud-sky .wx-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.hud-sky .wx-icon {
+  display: flex;
+  margin: -2px 0;
+}
+.hud-sky .wx-icon svg {
+  display: block;
+}
+.hud-sky.changing .wx-label {
+  color: var(--accent);
+}
+.hud-sky .nvg-chip {
+  display: none;
+  align-self: center;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #0b0f12;
+  background: #e8f4ff;
+  box-shadow: 0 0 10px rgba(220, 238, 255, 0.55);
+}
+.hud-sky .nvg-chip.on {
+  display: block;
+  animation: pill-in 220ms var(--spring) both;
+}
+
 .hud-hint {
   right: 16px;
   bottom: 16px;

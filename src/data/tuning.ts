@@ -51,24 +51,6 @@ export const TUNING = {
     /** In-plane speed (× hover induced velocity) at which the ring is blown clear. */
     clearStart: 0.45,
     clearEnd: 1.0,
-    /** Fraction of thrust lost in a fully developed ring. */
-    thrustLoss: 0.5,
-    /** Thrust buffet amplitude as a fraction of thrust. */
-    buffet: 0.12,
-  },
-
-  retreatingBlade: {
-    /** Stall onset advance ratio = this × (VNE / tip speed). */
-    onsetFactor: 1.04,
-    /** Advance-ratio width of the onset ramp. */
-    width: 0.07,
-    /** Extra onset per unit of CT/σ above nominal loading. */
-    loadingGain: 1.6,
-    nominalLoading: 0.08,
-    thrustLoss: 0.22,
-    /** Uncommanded rates at full stall, rad/s (roll toward retreating side, pitch up). */
-    rollRate: 0.55,
-    pitchRate: 0.3,
   },
 
   engine: {
@@ -79,15 +61,12 @@ export const TUNING = {
     greenMax: 1.05,
     /** Start hands over to the flight governor at this RPM. */
     flyHandover: 0.965,
-    governorKp: 9.0, // rated torques per unit RPM error
-    governorKi: 6.0,
+    /** Start-sequence spool controller gain, rated torques per unit RPM error. */
+    governorKp: 9.0,
     /** Max torque as a multiple of rated (transient limit). */
     torqueLimit: 1.2,
-    /** Short-term power above the rated figure. Rated power is the 100 % torque mark. */
+    /** Most power the engine gives, × rated. Past it, lift tops out (the rotor never droops). */
     transientPower: 1.15,
-    /** Seconds of full over-torque the transmission tolerates before it takes damage. */
-    overTorqueSeconds: 12,
-    overTorqueDamage: 0.012, // health per second once the allowance is used up
     /** RPM above which the rotor overspeeds and takes damage. */
     overspeed: 1.18,
     /** Shaft friction as a fraction of rated torque. */

@@ -136,8 +136,8 @@ export function rotorAero(
   // Vortex ring state: powered descent into the rotor's own wake.
   let vrs = 0;
   if (sign > 0 && thrust > 0) {
+    // Reported for the blade-slap sound only: the ring no longer costs thrust.
     vrs = vortexRingFactor(vcBar, vtBar);
-    thrust *= 1 - TUNING.vortexRing.thrustLoss * vrs;
   }
 
   out.viTarget = sign * vh * inflowRatio(vcBar, vtBar);

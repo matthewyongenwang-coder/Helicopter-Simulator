@@ -18,6 +18,7 @@ export type GameAction =
   | 'toggleControls'
   | 'toggleMap'
   | 'landingLight'
+  | 'nightVision'
   | 'respawn'
   | 'pause'
   | 'fireGun'
@@ -44,6 +45,7 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   toggleControls: ['KeyH', 'F1'],
   toggleMap: ['KeyM'],
   landingLight: ['KeyL'],
+  nightVision: ['KeyN'],
   respawn: ['KeyR'],
   pause: ['Escape', 'KeyP'],
   fireGun: ['KeyF'],
@@ -68,6 +70,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   toggleControls: 'Controls overlay',
   toggleMap: 'Minimap zoom',
   landingLight: 'Landing light',
+  nightVision: 'Night vision',
   respawn: 'Respawn at last helipad',
   pause: 'Pause / menu',
   fireGun: 'Fire gun (or left click)',
@@ -85,6 +88,7 @@ export const TOGGLE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'toggleControls',
   'toggleMap',
   'landingLight',
+  'nightVision',
   'respawn',
   'pause',
   'fireMissile',

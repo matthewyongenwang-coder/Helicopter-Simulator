@@ -83,6 +83,8 @@ export class WeatherSystem {
   private hold: number;
   /** The preset being blended toward. */
   target: string;
+  /** The preset being blended away from (same as target once settled). */
+  previous: string;
   /** Mean wind speed, m/s, and the direction the air moves toward (rad from +X toward +Z). */
   windSpeed = 0;
   windDir: number;
@@ -103,6 +105,7 @@ export class WeatherSystem {
     this.mode = mode in WEATHER ? mode : 'auto';
     this.hour = hour >= 0 ? hour : DAY_CYCLE.defaultHour;
     this.target = this.mode === 'auto' ? 'fair' : this.mode;
+    this.previous = this.target;
     this.base = mixOf(WEATHER[this.target], this.r);
     this.cur = { ...this.base };
     this.from = { ...this.base };
@@ -115,6 +118,11 @@ export class WeatherSystem {
 
   get label(): string {
     return WEATHER[this.target].label;
+  }
+
+  /** While a change is under way, the label of the weather it is leaving; otherwise null. */
+  get leaving(): string | null {
+    return this.blend < 1 && this.previous !== this.target ? WEATHER[this.previous].label : null;
   }
 
   /** Snow (true) or rain (false) for whatever is falling. */
@@ -150,6 +158,7 @@ export class WeatherSystem {
   }
 
   private goTo(id: string, now: boolean): void {
+    this.previous = now ? id : this.target;
     this.target = id;
     this.from = { ...this.base };
     this.to = mixOf(WEATHER[id], this.r);

@@ -48,6 +48,7 @@ the attitude of the aircraft; all motion comes from where the thrust points.
 | **X** | Autohover on / off |
 | **B** | Wheel brake (wheeled aircraft) |
 | **L** | Landing light |
+| **N** | Night vision (white phosphor) |
 | **C** | Chase / cockpit camera |
 | Mouse | Look around: click the view once and the camera follows the mouse. **Esc** frees the cursor. |
 | **V** | Centre the view |
@@ -68,14 +69,17 @@ Your first flight:
 4. To land, give **Shift** short pushes to step down, and let autohover hold each new height.
 
 With autohover off, the aircraft does exactly what you tell it. A tilt you leave in stays,
-and the aircraft keeps accelerating. Raising the collective also yaws the nose (torque),
-so you need a little **Q**/**E** to hold heading. Things to watch for:
+and the aircraft keeps accelerating. The flight model is built for flying hard, not for
+procedure: the rotor holds 100 % whatever you do with the lever, pulling past the engine's
+power just tops out the lift, the nose never yaws on its own when you move the collective,
+and there is no vortex ring state, retreating-blade stall or overtorque. Loops, rolls and
+full-collective pull-ups are all fair game. What still matters:
 
-- **Low rotor RPM**: pulling more collective than the engine can drive droops the rotor.
-- **Vortex ring state**: descending steeply and slowly into your own downwash loses lift.
-- **Retreating blade stall**: too fast for the rotor causes vibration, then a roll and pitch-up.
 - **Autorotation**: with the engine out, lower the collective to keep the rotor turning and flare at the bottom.
 - **Hard landings** damage the airframe; rotor or tail strikes and crashes destroy it.
+
+The card at the top left shows the time of day on a sun and moon dial, the weather (with
+the change under way, if one is), and the wind.
 
 ## Aircraft
 
@@ -161,10 +165,13 @@ Dependencies only point down that list. The flight model sees the world through 
 fly it over flat ground with scripted key presses.
 
 - **Flight model**: blade-element rotor thrust with dynamic inflow, momentum-theory induced
-  flow with an empirical descent branch (which gives translational lift, vortex ring state
-  and autorotation), ground effect, retreating-blade stall, a governed engine and rotor-speed
-  state, tail-rotor anti-torque, rate-command attitude, drag and wind, fuel burn, and
+  flow with an empirical descent branch (which gives translational lift and autorotation),
+  ground effect, an ideal governor that holds rotor speed while the engine runs (excess
+  demand caps thrust instead), rate-command attitude and yaw, drag and wind, fuel burn, and
   spring-damper gear contact.
+- **Night vision**: the scene is drawn into a linear HDR target, then amplified with an
+  auto-gain, given grain, halos around bright lights and an eyepiece vignette, and written
+  out in white phosphor.
 - **Autohover**: a cascaded controller that writes only to the pilot's own channels
   (attitude-rate commands, the collective lever, pedal trim). Each axis is handed back while
   its key is held.
@@ -181,9 +188,10 @@ covers what was verified, the design decisions and the known issues.
 
 ## Tests
 
-- `npm test` runs 111 Vitest tests: engine start, lift-off only in the green, manual flight
-  without self-levelling, autohover from a steep tilt in under 2 s, each autohover axis,
-  ground effect, translational lift, vortex ring, blade stall, autorotation, contact and
+- `npm test` runs 121 Vitest tests: engine start, lift-off only in the green, manual flight
+  without self-levelling, a full loop with no warning, autohover from a steep tilt in under
+  2 s, each autohover axis, ground effect, translational lift, no rotor droop at full
+  collective, autorotation, contact and
   damage, the six aircraft against each other, seeded worlds, settlements and bridges,
   weather and turbulence, compound placement, aiming and missile lock, enemy fire, flares,
   and destroying a compound.

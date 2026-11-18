@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GRAPHICS, TERRAIN_LOD, type GraphicsPreset, type QualityName } from '../data/graphics';
+import { NightVision } from './nightVision';
 
 /**
  * Renderer, scene, camera and the floating origin.
@@ -22,6 +23,7 @@ export class Engine {
   /** Shared uniform: the origin wrapped to a tile period, for world-anchored shader noise. */
   readonly originUniform = { value: new THREE.Vector2() };
   readonly timeUniform = { value: 0 };
+  readonly nightVision: NightVision;
 
   constructor(canvas: HTMLCanvasElement, quality: QualityName) {
     this.canvas = canvas;
@@ -42,6 +44,7 @@ export class Engine {
     const reversed = this.renderer.capabilities.reversedDepthBuffer;
     this.camera = new THREE.PerspectiveCamera(62, 1, reversed ? 0.35 : 1.2, 60000);
     this.scene.add(this.camera);
+    this.nightVision = new NightVision(this.renderer, this.quality.antialias ? 4 : 0);
     this.resize();
   }
 
@@ -81,7 +84,9 @@ export class Engine {
     return true;
   }
 
-  render(): void {
-    this.renderer.render(this.scene, this.camera);
+  /** Draw a frame, through the night-vision goggles when they are on. */
+  render(dt = 0, daylight = 1): void {
+    if (this.nightVision.enabled) this.nightVision.render(this.scene, this.camera, dt, daylight, this.renderer.toneMappingExposure);
+    else this.renderer.render(this.scene, this.camera);
   }
 }

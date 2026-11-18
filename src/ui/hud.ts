@@ -22,7 +22,13 @@ export interface HudState {
   z: number;
   lastPad: { x: number; z: number } | null;
   hour: number;
+  /** Weather label, preset id, and the label it is changing from (null when settled). */
   weather: string;
+  weatherId: string;
+  weatherLeaving: string | null;
+  /** 0 at night, 1 in full daylight. */
+  daylight: number;
+  nightVision: boolean;
   windX: number;
   windZ: number;
   turbulence: number;
@@ -53,17 +59,10 @@ const C = {
 /** Warnings in priority order: bit, text, severity. */
 const WARNINGS: [number, string, 'warning' | 'caution'][] = [
   [Warn.EngineOut, 'Engine out', 'warning'],
-  [Warn.LowRotorRpm, 'Low rotor RPM', 'warning'],
   [Warn.SinkRate, 'Sink rate', 'warning'],
-  [Warn.VortexRing, 'Vortex ring state', 'warning'],
   [Warn.TailRotor, 'Tail rotor failure', 'warning'],
-  [Warn.Overspeed, 'Overspeed', 'warning'],
-  [Warn.BladeStall, 'Retreating blade stall', 'caution'],
-  [Warn.OverTorque, 'Overtorque', 'caution'],
-  [Warn.HighRotorRpm, 'High rotor RPM', 'caution'],
   [Warn.Damage, 'Damage', 'caution'],
   [Warn.LowFuel, 'Low fuel', 'caution'],
-  [Warn.Overweight, 'Overweight', 'caution'],
   [Warn.LowerCollective, 'Lower collective to start', 'caution'],
 ];
 
@@ -81,6 +80,35 @@ function hidpi(w: number, h: number, cls: string): [HTMLCanvasElement, CanvasRen
 
 const pad2 = (n: number) => String(Math.floor(n)).padStart(2, '0');
 
+/** What part of the day an hour falls in. */
+function dayPhase(h: number): string {
+  if (h >= 5 && h < 7) return 'Dawn';
+  if (h >= 7 && h < 11) return 'Morning';
+  if (h >= 11 && h < 13.5) return 'Midday';
+  if (h >= 13.5 && h < 17) return 'Afternoon';
+  if (h >= 17 && h < 19) return 'Dusk';
+  if (h >= 19 && h < 22) return 'Evening';
+  return 'Night';
+}
+
+/** Weather glyphs, 20 × 20, stroked in the current colour. */
+const CLOUD = '<path d="M6.2 15.5h8.3a3.2 3.2 0 0 0 .3-6.4 4.6 4.6 0 0 0-8.8 1.2 2.6 2.6 0 0 0 .2 5.2z"/>';
+const SUN = '<circle cx="10" cy="10" r="3.4"/><path d="M10 2.6v1.8M10 15.6v1.8M2.6 10h1.8M15.6 10h1.8M4.8 4.8l1.3 1.3M13.9 13.9l1.3 1.3M4.8 15.2l1.3-1.3M13.9 6.1l1.3-1.3"/>';
+const MOON = '<path d="M14.6 12.9A6 6 0 0 1 7.1 5.4a6 6 0 1 0 7.5 7.5z"/>';
+const RAISED = (body: string) => `<g transform="translate(0 -2.5)">${body}</g>`;
+const ICONS: Record<string, (night: boolean) => string> = {
+  clear: (n) => (n ? MOON : SUN),
+  fair: (n) => `<g transform="translate(3.2 -3.2) scale(0.62)">${n ? MOON : SUN}</g>${CLOUD}`,
+  gale: () => '<path d="M2.5 7.5h9.2a2.3 2.3 0 1 0-2.3-2.3M2.5 11h12.8a2.3 2.3 0 1 1-2.3 2.3M2.5 14.5h6"/>',
+  mist: () => '<path d="M3 7h14M5 10.5h12M3 14h11"/>',
+  fog: () => '<path d="M3 5.5h14M3 9h14M3 12.5h14M5 16h10"/>',
+  overcast: () => `<path d="M8.6 6.6a3.6 3.6 0 0 1 6.6 1.4 2.5 2.5 0 0 1 .4 5" opacity="0.55"/>${CLOUD}`,
+  showers: (n) => `${RAISED(`<g transform="translate(3.2 -3.2) scale(0.62)">${n ? MOON : SUN}</g>${CLOUD}`)}<path d="M8 15.8l-.7 1.8M12 15.8l-.7 1.8"/>`,
+  rain: () => `${RAISED(CLOUD)}<path d="M6.8 15.6l-.8 2M10 15.6l-.8 2M13.2 15.6l-.8 2"/>`,
+  storm: () => `${RAISED(CLOUD)}<path d="M10.6 13.2l-2 3.2h2.6l-1.6 2.8"/>`,
+  snow: () => `${RAISED(CLOUD)}<path d="M7 16.4h.01M10 17.6h.01M13 16.4h.01" stroke-width="2.4"/>`,
+};
+
 /** Flight instruments, engine gauges, warnings, minimap and the crash banner. */
 export class Hud {
   readonly minimap: Minimap;
@@ -93,6 +121,16 @@ export class Hud {
   private rad = el('div', { class: 'small num' });
   private vs = el('div', { class: 'small num' });
   private info = el('div', { class: 'hud-seed hud-panel' });
+  private sky = el('div', { class: 'hud-sky hud-panel', role: 'status', 'aria-label': 'Time and weather' });
+  private dial: CanvasRenderingContext2D;
+  private skyClock = el('div', { class: 'clock num' });
+  private skyPhase = el('div', { class: 'phase' });
+  private wxIcon = el('span', { class: 'wx-icon', 'aria-hidden': 'true' });
+  private wxLabel = el('span', { class: 'wx-label' });
+  private wxSub = el('div', { class: 'wx-sub num' });
+  private nvg = el('div', { class: 'nvg-chip' }, 'NVG');
+  private lastSky = '';
+  private lastIcon = '';
   private hint = el('div', { class: 'hud-hint hud-panel' });
   private mapCap = el('div', { class: 'cap' });
   private pills = el('div', { class: 'pills', 'aria-live': 'polite' });
@@ -113,6 +151,15 @@ export class Hud {
     this.tape = tape;
     this.gauges = g;
     this.minimap = new Minimap(world, pool, helipads, 196);
+    const [dialC, dial] = hidpi(38, 38, 'dial');
+    this.dial = dial;
+    this.sky.append(
+      dialC,
+      el('div', { class: 'sky-time' }, this.skyClock, this.skyPhase),
+      el('div', { class: 'sky-sep' }),
+      el('div', { class: 'sky-wx' }, el('div', { class: 'wx-row' }, this.wxIcon, this.wxLabel), this.wxSub),
+      this.nvg,
+    );
 
     const col = (cls: string, label: string, big: HTMLElement, ...rest: HTMLElement[]) =>
       el('div', { class: `col ${cls}` }, el('div', { class: 'label' }, label), big, ...rest);
@@ -126,6 +173,7 @@ export class Hud {
     );
     this.banner.style.display = 'none';
     root.append(
+      this.sky,
       this.info,
       el('div', { class: 'hud-top hud-panel' }, tapeC),
       this.pills,
@@ -176,16 +224,11 @@ export class Hud {
     const from = ((Math.atan2(-s.windX, s.windZ) * 180) / Math.PI + 360) % 360;
     const clock = `${pad2(s.hour)}:${pad2((s.hour % 1) * 60)}`;
     const windText = wind < 0.5 ? 'Calm' : `Wind ${String(Math.round(from / 10) * 10 || 360).padStart(3, '0')}° ${Math.round(wind / KTS)} kt${s.turbulence > 1.5 ? ' · gusty' : ''}`;
-    const info = `${s.seed}|${clock}|${s.weather}|${windText}`;
-    if (info !== this.lastInfo) {
-      this.lastInfo = info;
-      this.info.replaceChildren(
-        el('span', {}, 'Seed'), el('b', {}, s.seed),
-        el('span', { class: 'num' }, clock),
-        el('span', {}, s.weather),
-        el('span', { class: 'num' }, windText),
-      );
+    if (s.seed !== this.lastInfo) {
+      this.lastInfo = s.seed;
+      this.info.replaceChildren(el('span', {}, 'Seed'), el('b', {}, s.seed));
     }
+    this.updateSky(s, clock, windText);
     const k = this.actions.keys();
     let hint: [string, string][];
     if (s.destroyed) hint = [[k.respawn, 'Respawn'], [k.pause, 'Menu']];
@@ -205,6 +248,68 @@ export class Hud {
       });
       this.hint.replaceChildren(...parts);
     }
+  }
+
+  /** The time and weather card: a sun/moon dial, the clock, and the weather with its wind. */
+  private updateSky(s: HudState, clock: string, windText: string): void {
+    this.drawDial(s.hour, s.daylight);
+    const night = s.daylight < 0.3;
+    const label = s.weatherLeaving ? `${s.weatherLeaving} → ${s.weather}` : s.weather;
+    const key = `${clock}|${label}|${windText}|${s.nightVision}`;
+    if (key !== this.lastSky) {
+      this.lastSky = key;
+      this.skyClock.textContent = clock;
+      this.skyPhase.textContent = dayPhase(s.hour);
+      this.wxLabel.textContent = label;
+      this.wxSub.textContent = windText;
+      this.nvg.classList.toggle('on', s.nightVision);
+      this.sky.classList.toggle('changing', s.weatherLeaving !== null);
+    }
+    const icon = `${s.weatherId}|${night}`;
+    if (icon !== this.lastIcon) {
+      this.lastIcon = icon;
+      const glyph = (ICONS[s.weatherId] ?? ICONS.fair)(night);
+      this.wxIcon.innerHTML = `<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${glyph}</svg>`;
+    }
+  }
+
+  /** Sky dial: the sun rises on the left at 06:00, peaks at noon and sets on the right; the moon rides opposite. */
+  private drawDial(hour: number, daylight: number): void {
+    const c = this.dial, S = 38, cx = S / 2, cy = S / 2, r = S / 2 - 2;
+    c.clearRect(0, 0, S, S);
+    c.save();
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.clip();
+    // Sky above the horizon, from deep night to day blue; ground below.
+    const d = Math.max(0, Math.min(1, daylight));
+    const dusk = Math.max(0, 1 - Math.abs(daylight - 0.35) / 0.25);
+    c.fillStyle = `rgb(${Math.round(14 + 70 * d + 120 * dusk)}, ${Math.round(20 + 120 * d + 40 * dusk)}, ${Math.round(40 + 170 * d)})`;
+    c.fillRect(0, 0, S, cy);
+    c.fillStyle = 'rgba(255,255,255,0.06)';
+    c.fillRect(0, cy, S, S - cy);
+    c.restore();
+    c.strokeStyle = 'rgba(255,255,255,0.22)';
+    c.lineWidth = 1;
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - r, cy);
+    c.lineTo(cx + r, cy);
+    c.stroke();
+    const a = (Math.PI * (hour - 6)) / 12;
+    const track = r - 6;
+    const body = (ang: number, col: string, rad: number) => {
+      const x = cx - Math.cos(ang) * track, y = cy - Math.sin(ang) * track;
+      if (y > cy + rad) return;
+      c.fillStyle = col;
+      c.beginPath();
+      c.arc(x, y, rad, 0, Math.PI * 2);
+      c.fill();
+    };
+    body(a + Math.PI, 'rgba(226,232,246,0.92)', 3);
+    body(a, '#ffd60a', 4);
   }
 
   private updatePills(s: HudState): void {
@@ -415,7 +520,8 @@ export class Hud {
     const nrCol = inGreen ? C.ok : t.rotorRpm > E.greenMax ? C.danger : s.engine === 'starting' ? C.accent : t.rotorRpm > 0.05 ? C.warn : C.faint;
     bar(0, 'NR', nr, 115, `${Math.round(nr)}%`, nrCol, [[E.greenMin * 100, E.greenMax * 100, C.ok], [E.greenMax * 100, 115, C.danger]]);
     const tq = t.torque * 100;
-    bar(1, 'TQ', tq, 125, `${Math.round(tq)}%`, tq > 115 ? C.danger : tq > 100 ? C.warn : C.accent, [[0, 100, C.ok], [100, 115, C.warn], [115, 125, C.danger]], [100]);
+    // Torque is information only: there is no limit to exceed.
+    bar(1, 'TQ', tq, 130, `${Math.round(tq)}%`, C.accent, [], [100]);
     bar(2, 'COLL', t.collective * 100, 100, `${Math.round(t.collective * 100)}%`, '#e6e9ee', []);
     const low = t.fuelFraction < 0.12;
     bar(3, 'FUEL', t.fuelFraction * 100, 100, `${Math.round(t.fuel)} kg`, low ? (this.blink < 0.5 ? C.danger : C.warn) : '#c9ced6', [[0, 12, C.danger]]);

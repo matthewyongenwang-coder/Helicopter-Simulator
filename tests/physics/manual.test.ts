@@ -109,32 +109,38 @@ describe('manual flight, autohover off', () => {
     expect(heli.collective).toBeCloseTo(lever1 + 0.25 * M.handling.collectiveRate, 2);
   });
 
-  it('anti-torque: raising collective yaws the nose right until the pilot corrects with Q', () => {
-    const { sim, heli } = inHover('medium', 30);
+  it('collective changes never yaw the nose: no pedal work to hold a heading', () => {
+    const { sim, heli } = inHover('medium', 300);
     const h0 = heli.tel.heading;
-    sim.run(3);
-    const baseline = headingDiff(heli.tel.heading, h0); // hands-off drift
-    expect(Math.abs(baseline)).toBeLessThan(2);
-
     hold(sim, 'Space', 0.6);
-    const h1 = heli.tel.heading;
     sim.run(3);
-    const swing = headingDiff(heli.tel.heading, h1);
-    expect(swing).toBeGreaterThan(6); // nose swings right under the extra torque
-    expect(heli.tel.yawRate).toBeGreaterThan(0);
-
-    // Left pedal overcomes it.
+    expect(Math.abs(headingDiff(heli.tel.heading, h0))).toBeLessThan(1);
+    hold(sim, 'ShiftLeft', 1.2);
+    sim.run(2);
+    expect(Math.abs(headingDiff(heli.tel.heading, h0))).toBeLessThan(1);
+    // The pedals still turn it.
     sim.keyDown('KeyQ');
     sim.run(1);
-    expect(heli.tel.yawRate).toBeLessThan(0);
+    expect(heli.tel.yawRate).toBeLessThan(-0.3);
     sim.keyUp('KeyQ');
   });
 
-  it('lowering collective yaws the other way', () => {
-    const { sim, heli } = inHover('medium', 300);
-    hold(sim, 'ShiftLeft', 0.6);
-    const h1 = heli.tel.heading;
-    sim.run(2);
-    expect(headingDiff(heli.tel.heading, h1)).toBeLessThan(-3);
+  it('stunts: a full loop on the cyclic with the lever up keeps 100 % rotor and raises no warning', () => {
+    const { sim, heli } = inHover('attack', 600, { speed: 50 });
+    sim.keyDown('Space');
+    let minN = 1, warnings = 0, turned = 0;
+    sim.keyDown('KeyS');
+    sim.run(8.5, () => {
+      minN = Math.min(minN, heli.rotorN);
+      warnings |= heli.tel.warnings;
+      turned += deg(Math.abs(heli.omega.x)) / 120; // pitch rate × the 120 Hz step
+    });
+    sim.keyUp('KeyS');
+    sim.keyUp('Space');
+    expect(turned).toBeGreaterThan(360); // the nose went all the way round
+    expect(minN).toBeGreaterThan(0.995);
+    expect(warnings).toBe(0);
+    expect(heli.health).toBe(1);
+    expect(heli.destroyed).toBe(false);
   });
 });

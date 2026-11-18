@@ -106,7 +106,6 @@ export interface Aircraft {
   // Speed limits (m/s)
   topSpeed: number;
   vne: number;
-  muStall: number;
   // Contact
   gearK: number[];
   gearC: number[];
@@ -132,21 +131,14 @@ export interface Aircraft {
 
 /** Warning bit flags for the HUD and audio. */
 export const enum Warn {
-  LowRotorRpm = 1 << 0,
-  HighRotorRpm = 1 << 1,
-  OverTorque = 1 << 2,
   LowFuel = 1 << 3,
   EngineOut = 1 << 4,
-  VortexRing = 1 << 5,
-  BladeStall = 1 << 6,
-  Overspeed = 1 << 7,
   SinkRate = 1 << 8,
   TailRotor = 1 << 9,
   LowerCollective = 1 << 10,
   Damage = 1 << 11,
   Terrain = 1 << 12,
   AutohoverUnavailable = 1 << 13,
-  Overweight = 1 << 14,
 }
 
 /** Read-only snapshot of derived flight values, refreshed every step. */
@@ -174,7 +166,6 @@ export interface Telemetry {
   inGroundEffect: number; // 0–1
   translationalLift: number; // 0–1
   vortexRing: number; // 0–1
-  bladeStall: number; // 0–1
   vibration: number; // 0–1 for camera shake and audio
   fuel: number; // kg
   fuelFraction: number;

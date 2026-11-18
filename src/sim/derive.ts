@@ -170,7 +170,6 @@ export function deriveAircraft(d: AircraftData): Aircraft {
     yawRate,
     tailTorqueMax, pedalHover, pedalSlope, hoverCollective,
     topSpeed, vne,
-    muStall: (TUNING.retreatingBlade.onsetFactor * vne) / d.rotor.tipSpeed,
     gearK, gearC, rotorTips, restHeight,
     ahMaxTilt: d.autohover.maxTilt * DEG,
     ahMaxRate: d.autohover.maxRate * DEG,
