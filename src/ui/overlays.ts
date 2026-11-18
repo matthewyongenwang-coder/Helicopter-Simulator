@@ -5,6 +5,7 @@ import { el } from './menu';
 const GROUPS: [string, Action[]][] = [
   ['Flight', ['collectiveUp', 'collectiveDown', 'pitchDown', 'pitchUp', 'rollLeft', 'rollRight', 'yawLeft', 'yawRight']],
   ['Systems', ['engineToggle', 'autohoverToggle', 'wheelBrake', 'landingLight']],
+  ['Weapons', ['fireGun', 'fireMissile', 'flares']],
   ['View', ['cameraNext', 'freeLook', 'toggleMap']],
   ['Game', ['toggleControls', 'respawn', 'pause']],
 ];

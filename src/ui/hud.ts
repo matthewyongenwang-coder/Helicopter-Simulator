@@ -29,6 +29,8 @@ export interface HudState {
   seed: string;
   /** The mouse is captured for looking around. */
   mouseLook: boolean;
+  /** Combat warnings, most urgent first: [class, text]. */
+  combat?: [string, string][];
 }
 
 export interface HudActions {
@@ -206,7 +208,7 @@ export class Hud {
   }
 
   private updatePills(s: HudState): void {
-    const items: [string, string][] = [];
+    const items: [string, string][] = s.destroyed ? [] : [...(s.combat ?? [])];
     if (s.autohoverEngaged) items.push([s.autohoverActive ? 'autohover' : 'autohover standby', s.autohoverActive ? 'Autohover' : 'Autohover standby']);
     const w = s.tel.warnings;
     let n = 0;

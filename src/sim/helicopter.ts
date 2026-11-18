@@ -649,6 +649,13 @@ export class Helicopter {
     tel.warnings = warn;
   }
 
+  /** Damage from outside the flight model (weapons). `crit` is the chance it takes out the tail rotor. */
+  takeHit(amount: number, reason: string, crit = 0, roll = Math.random()): void {
+    if (this.destroyed) return;
+    if (roll < crit && this.rotorN > 0.3) this.tailRotorOk = false;
+    this.applyDamage(amount, reason);
+  }
+
   private applyDamage(amount: number, reason: string): void {
     if (amount <= 0 || this.destroyed) return;
     this.health -= amount;

@@ -19,7 +19,10 @@ export type GameAction =
   | 'toggleMap'
   | 'landingLight'
   | 'respawn'
-  | 'pause';
+  | 'pause'
+  | 'fireGun'
+  | 'fireMissile'
+  | 'flares';
 
 export type Action = FlightAction | GameAction;
 
@@ -43,6 +46,9 @@ export const DEFAULT_BINDINGS: Record<Action, string[]> = {
   landingLight: ['KeyL'],
   respawn: ['KeyR'],
   pause: ['Escape', 'KeyP'],
+  fireGun: ['KeyF'],
+  fireMissile: ['KeyG'],
+  flares: ['KeyK'],
 };
 
 export const ACTION_LABELS: Record<Action, string> = {
@@ -64,6 +70,9 @@ export const ACTION_LABELS: Record<Action, string> = {
   landingLight: 'Landing light',
   respawn: 'Respawn at last helipad',
   pause: 'Pause / menu',
+  fireGun: 'Fire gun (or left click)',
+  fireMissile: 'Fire missile (or right click)',
+  flares: 'Release flares',
 };
 
 /** Actions that fire once per key press instead of being held. */
@@ -78,4 +87,6 @@ export const TOGGLE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   'landingLight',
   'respawn',
   'pause',
+  'fireMissile',
+  'flares',
 ]);

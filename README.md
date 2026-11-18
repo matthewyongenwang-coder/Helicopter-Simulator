@@ -53,6 +53,9 @@ the attitude of the aircraft; all motion comes from where the thrust points.
 | **V** | Centre the view |
 | **M** | Minimap zoom |
 | **H** or **F1** | Controls overlay (rebind any key here) |
+| Left click / **F** | Fire the gun (hold) |
+| Right click / **G** | Fire a missile |
+| **K** | Release flares |
 | **R** | Respawn at the last helipad you landed on |
 | **Esc** / **P** | Menu (with Resume) |
 | **`** | Debug read-out |
@@ -87,6 +90,31 @@ so you need a little **Q**/**E** to hold heading. Things to watch for:
 
 The menu compares their specs in a table. Climb rate, hover ceiling and range are
 computed from the flight model, not typed in.
+
+## Combat
+
+Hostile compounds are scattered through the countryside, away from towns and roads. Each is
+a walled outpost (command post, barracks, fuel, ammunition, trucks, guard towers) defended
+by machine-gun nests, often a flak gun, and usually a surface-to-air missile launcher with
+its radar. Red diamonds mark them on screen and on the minimap. Come within about 1.1 km and
+the machine guns open up; flak reaches 1.7 km; the SAM site locks on out to 3.3 km once you
+are more than 14 m above the ground and it can see you. Hills block their line of sight, so
+low, terrain-masked flight is the way in.
+
+| Aircraft | Weapons | Flares |
+|---|---|---|
+| Wasp | 12.7 mm gun pods, 2 missiles | 30 |
+| Nightjar | 20 mm turret, 4 missiles | 60 |
+| Shrike | 30 mm chin turret, 8 missiles | 60 |
+| Mule, Atlas, Petrel | Unarmed | 30–90 |
+
+The reticle shows where you are aiming: the guns fire where you look (turrets traverse,
+fixed pods only a little). Hold the reticle near a target and the missile seeker locks on
+(the box closes and turns red); a missile fired without a lock flies to the reticle. When a
+SAM launches you hear a fast warning tone and see a red tick around the reticle pointing at
+it. Press **K** to dump flares, which pull most missiles off. Parts of a compound burn and
+blow up as you hit them, and fuel and ammunition take their neighbours with them. Break it
+below 40 % and the whole compound goes up, then burns for minutes under a column of smoke.
 
 ## The world
 
@@ -139,11 +167,15 @@ covers what was verified, the design decisions and the known issues.
 
 ## Tests
 
-- `npm test` runs 101 Vitest tests: engine start, lift-off only in the green, manual flight
+- `npm test` runs 111 Vitest tests: engine start, lift-off only in the green, manual flight
   without self-levelling, autohover from a steep tilt in under 2 s, each autohover axis,
   ground effect, translational lift, vortex ring, blade stall, autorotation, contact and
   damage, the six aircraft against each other, seeded worlds, settlements and bridges,
-  weather and turbulence.
+  weather and turbulence, compound placement, aiming and missile lock, enemy fire, flares,
+  and destroying a compound.
+- `node tests/e2e/combat.mjs` flies the Shrike at a compound in headless Chromium: it is
+  engaged, dodges a SAM with flares, destroys the compound with guns and missiles, and
+  saves screenshots of the explosion to `tests/e2e/out/`.
 - `npm run e2e` checks the menu, every aircraft model, the HUD, weather, damage, the
   cockpit, rebinding, pause and resume, and the city, bridge and night scenes. It flies a
   165 kt streaming cruise and a real key-press playtest (start, lift off, hover, fly out,

@@ -1,4 +1,6 @@
+import { COMPOUNDS } from '../data/weapons';
 import { Biome, ROADS } from '../data/world';
+import { compoundInCell, type CompoundSite } from './compounds';
 import { newRoadHit, Roads, type RoadHit } from './roads';
 import { Settlements } from './settlements';
 import { newSample, newSurface, smoothstep, Terrain, type Surface, type TerrainSample } from './terrain';
@@ -23,6 +25,9 @@ export class World {
   private sBase = newSample();
   private surf = newSurface();
   private hit = newRoadHit();
+  private compoundCells = new Map<number, CompoundSite | null>();
+  private lastCell = NaN;
+  private lastSite: CompoundSite | null = null;
 
   constructor(seed: number) {
     this.seed = seed >>> 0;
@@ -61,6 +66,25 @@ export class World {
     }
     out.h = h;
     return h;
+  }
+
+  /**
+   * The compound whose generation cell holds this point, if any. A compound
+   * keeps well inside its cell, so its yard never crosses into the next one.
+   */
+  compoundAt(x: number, z: number): CompoundSite | null {
+    const C = COMPOUNDS.cell;
+    const key = (Math.floor(x / C) + 32768) * 65536 + (Math.floor(z / C) + 32768);
+    if (key === this.lastCell) return this.lastSite;
+    let site = this.compoundCells.get(key);
+    if (site === undefined) {
+      site = compoundInCell(this, Math.floor(x / C), Math.floor(z / C));
+      if (this.compoundCells.size > 4000) this.compoundCells.clear();
+      this.compoundCells.set(key, site);
+    }
+    this.lastCell = key;
+    this.lastSite = site;
+    return site;
   }
 
   /** Nearest road to a point. The returned object is reused between calls. */
@@ -102,6 +126,21 @@ export class World {
       out.b += (lb - out.b) * k;
       if (k > 0.5) out.biome = Biome.Urban;
       out.trees *= 1 - smoothstep(0.03, 0.14, dens);
+    }
+    // Compounds stand in a cleared, trampled yard.
+    const site = this.compoundAt(x, z);
+    if (site) {
+      const dx = x - site.x, dz = z - site.z;
+      const c = Math.cos(site.yaw), sn = Math.sin(site.yaw);
+      const m = Math.max(Math.abs(dx * c - dz * sn), Math.abs(dx * sn + dz * c));
+      if (m < site.half + 30) {
+        const k = 1 - smoothstep(site.half + 4, site.half + 30, m);
+        out.trees *= 1 - k;
+        const d = k * 0.8;
+        out.r += (0.5 - out.r) * d;
+        out.g += (0.44 - out.g) * d;
+        out.b += (0.33 - out.b) * d;
+      }
     }
     const hit = this.hit;
     if (this.roads.nearest(x, z, hit) && !hit.bridge && hit.d < hit.road!.halfWidth + 9) {

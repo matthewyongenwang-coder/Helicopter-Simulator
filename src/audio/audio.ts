@@ -319,6 +319,87 @@ export class FlightAudio {
     this.burst(0.8, 200, 30, 3.5, 0.05);
   }
 
+  /** Filtered noise with a sweeping cutoff: gunfire, whooshes, cracks. */
+  private noiseHit(level: number, type: BiquadFilterType, f0: number, f1: number, decay: number, delay = 0, q = 0.7, inside = false): void {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime + delay;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noise;
+    const b = ctx.createBiquadFilter();
+    b.type = type;
+    b.Q.value = q;
+    b.frequency.setValueAtTime(f0, t);
+    b.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + decay);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(level, t + 0.004);
+    g.gain.setTargetAtTime(0, t + 0.01, decay / 3);
+    s.connect(b).connect(g).connect(inside ? this.master : this.outside);
+    s.start(t, Math.random());
+    s.stop(t + decay * 2 + 0.3);
+  }
+
+  /** A short tone: lock, warnings, empty clicks. */
+  tone(freq: number, dur: number, level: number, type: OscillatorType = 'sine'): void {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime + 0.005;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(level, t + 0.008);
+    g.gain.setTargetAtTime(0, t + dur * 0.8, 0.015);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + dur + 0.15);
+  }
+
+  /** One round from the aircraft's own gun: a sharp report over a low thump. */
+  gunShot(heavy: boolean): void {
+    this.noiseHit(heavy ? 0.5 : 0.36, 'lowpass', heavy ? 2600 : 3600, 160, heavy ? 0.1 : 0.07);
+    this.burst(heavy ? 0.5 : 0.3, 260, 50, heavy ? 0.14 : 0.09);
+  }
+
+  /** Enemy fire heard from a distance (arrives late, sounds duller further off). */
+  enemyShot(distance: number, flak: boolean): void {
+    const k = Math.max(0, 1 - distance / 2200);
+    if (k <= 0.02) return;
+    const delay = Math.min(4, distance / 343);
+    this.noiseHit((flak ? 0.3 : 0.18) * k, 'lowpass', 600 + 2400 * k, 90, flak ? 0.16 : 0.08, delay);
+  }
+
+  missileLaunch(enemy: boolean, distance: number): void {
+    const k = enemy ? Math.max(0.1, 1 - distance / 4000) : 1;
+    const delay = enemy ? Math.min(6, distance / 343) : 0;
+    this.burst(0.5 * k, 900, 60, 0.35, delay);
+    this.noiseHit(0.45 * k, 'bandpass', 500, 2600, 1.3, delay, 1.4);
+  }
+
+  flarePop(): void {
+    this.noiseHit(0.32, 'highpass', 2200, 900, 0.07);
+    this.noiseHit(0.12, 'bandpass', 3000, 1400, 0.6, 0.03, 2);
+  }
+
+  /** A blast: louder and deeper the bigger it is, late by the distance. */
+  boom(distance: number, size: number): void {
+    const k = Math.max(0.05, 1 - distance / (2500 + 2500 * size));
+    const delay = Math.min(6, distance / 343);
+    this.burst(Math.min(1.4, 0.55 * size * k + 0.1), 600 + 2600 * k, 35, 0.7 + 0.8 * size, delay);
+    this.burst(Math.min(1.2, 0.5 * size * k), 160, 25, 1.4 + 1.2 * size, delay + 0.04);
+  }
+
+  /** A round passing close by. */
+  crack(): void {
+    this.noiseHit(0.32, 'highpass', 4200, 1800, 0.035);
+  }
+
+  /** A round striking the airframe. */
+  ping(heavy: boolean): void {
+    this.noiseHit(heavy ? 0.9 : 0.5, 'bandpass', heavy ? 1400 : 2400, 500, heavy ? 0.25 : 0.1, 0, 3, true);
+    if (heavy) this.burst(0.9, 1200, 40, 1.0);
+  }
+
   thunder(distance: number): void {
     const k = Math.max(0.15, 1 - distance / 9000);
     const delay = distance / 343;

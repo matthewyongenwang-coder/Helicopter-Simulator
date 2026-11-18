@@ -25,6 +25,8 @@ export class CameraRig {
   private orbit = 0;
   private snap = true;
   private shake = 0;
+  /** Extra shake from blasts nearby; decays on its own. */
+  private jolt = 0;
   private readonly q = new THREE.Quaternion();
   private readonly qLook = new THREE.Quaternion();
   private readonly e = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -42,6 +44,11 @@ export class CameraRig {
     this.mode = this.mode === 'chase' ? 'cockpit' : 'chase';
     this.reset();
     return this.mode;
+  }
+
+  /** Shake the view (a blast nearby). */
+  kick(amount: number): void {
+    this.jolt = Math.max(this.jolt, Math.min(3, amount));
   }
 
   /** Ease the view back to straight ahead (it stays there until the mouse moves again). */
@@ -72,7 +79,8 @@ export class CameraRig {
     const cam = this.engine.camera;
     const w = this.world;
     this.shake += (vibration - this.shake) * Math.min(1, dt * 6);
-    const sh = this.shake * 0.035;
+    this.jolt *= Math.exp(-dt * 3.5);
+    const sh = this.shake * 0.035 + this.jolt * 0.12;
     const sx = Math.sin(time * 61) * sh, sy = Math.sin(time * 47 + 1.3) * sh;
 
     if (this.mode === 'cockpit') {

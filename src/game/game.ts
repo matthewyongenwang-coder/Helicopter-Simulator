@@ -4,6 +4,7 @@ import type { Action } from '../data/controls';
 import type { QualityName } from '../data/graphics';
 import { AIRCRAFT_VISUAL } from '../data/aircraftVisual';
 import { CameraRig } from '../render/cameras';
+import { CombatView } from '../render/combatView';
 import { Clouds } from '../render/clouds';
 import { Effects } from '../render/effects';
 import { Engine } from '../render/engine';
@@ -19,6 +20,7 @@ import { seedToString } from '../world/rng';
 import { helipadsNear, type Helipad } from '../world/structures';
 import { WorkerPool } from '../world/workerPool';
 import { World } from '../world/world';
+import { Combat, type CombatEvent, type CombatInput, type PlayerState } from './combat';
 import { KeyboardInput } from './input';
 import { WeatherSystem } from './weather';
 import { WorldEnvironment } from './worldEnv';
@@ -53,6 +55,9 @@ export type GameMode = 'menu' | 'fly';
 
 const NAV_COLORS = [0xff2a1a, 0x1aff4a, 0xffffff];
 
+/** Where the reticle sits on screen (normalised device y), per camera: above the aircraft in the chase view. */
+export const AIM_NDC_Y = { chase: 0.3, cockpit: 0, orbit: 0 } as const;
+
 /** Top-level orchestration: owns the world, the simulation and the renderer, and runs the frame loop. */
 export class Game {
   readonly engine: Engine;
@@ -68,6 +73,17 @@ export class Game {
   readonly effects: Effects;
   readonly weather: WeatherSystem;
   readonly input = new KeyboardInput();
+  readonly combat: Combat;
+  readonly combatView: CombatView;
+  /** Combat events from this frame, for the HUD and audio. */
+  combatEvents: CombatEvent[] = [];
+  /** Mouse trigger (left button held), and one-shot missile and flare requests. */
+  gunHeld = false;
+  private missileQueued = false;
+  private flaresQueued = false;
+  private readonly player: PlayerState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, qx: 0, qy: 0, qz: 0, qw: 1, radius: 3, agl: 0, alive: true, fragility: 1 };
+  private readonly combatInput: CombatInput = { gun: false, missile: false, flares: false, ray: { ox: 0, oy: 0, oz: 0, dx: 0, dy: 0, dz: -1 } };
+  private readonly aimV = new THREE.Vector3();
   sim!: Simulation;
   model!: HeliModel;
   aircraft: AircraftData;
@@ -136,10 +152,13 @@ export class Game {
     });
     this.rig = new CameraRig(this.engine, (x, z) => this.env.ground(x, z));
     this.effects = new Effects(this.engine);
+    this.combat = new Combat(this.world, { hit: (amount, reason, crit) => this.sim.heli.takeHit(amount, reason, crit) });
+    this.combatView = new CombatView(this.engine, this.effects, this.combat, (x, z) => this.combat.surface(x, z, 30));
     this.weather = new WeatherSystem(opts.seed, opts.weather ?? 'auto', opts.hour ?? -1);
     this.setupLighting();
     this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
     this.lastPad = this.findSpawn();
+    this.combat.home = { x: this.lastPad.x, z: this.lastPad.z };
     this.spawn(this.aircraft, this.lastPad);
     window.addEventListener('resize', () => this.engine.resize());
   }
@@ -193,6 +212,9 @@ export class Game {
     this.charred = false;
     this.castsShadow = true;
     this.effects.reset();
+    this.combat.arm(data.id);
+    this.combatView.reset();
+    this.gunHeld = this.missileQueued = this.flaresQueued = false;
     this.rig.reset();
     this.flightTime = 0;
     this.padTimer = 0;
@@ -274,6 +296,7 @@ export class Game {
     m.cockpit.visible = cockpit;
 
     const w = this.rig.world;
+    this.updateCombat(dt, live);
     this.updateWeather(live ? dt : this.mode === 'menu' ? dt : 0, w.y);
     this.updateEffects(live ? dt : 0, dt);
     this.terrain.update(w.x, w.y, w.z);
@@ -366,6 +389,52 @@ export class Game {
     this.envTarget = rt;
     this.engine.scene.environment = rt.texture;
     this.engine.scene.environmentIntensity = 0.35 + 0.45 * this.sky.daylight;
+  }
+
+  /** Fire a missile on the next frame (mouse or key). */
+  fireMissile(): void {
+    this.missileQueued = true;
+  }
+
+  /** Release a salvo of flares on the next frame. */
+  releaseFlares(): void {
+    this.flaresQueued = true;
+  }
+
+  /** The sight line, the shooting, and everything it sets alight. */
+  private updateCombat(dt: number, live: boolean): void {
+    const h = this.sim.heli, p = this.player, c = this.combat, w = this.rig.world;
+    p.x = this.renderPos.x; p.y = this.renderPos.y; p.z = this.renderPos.z;
+    p.vx = h.vel.x; p.vy = h.vel.y; p.vz = h.vel.z;
+    p.qx = this.renderQ.x; p.qy = this.renderQ.y; p.qz = this.renderQ.z; p.qw = this.renderQ.w;
+    p.radius = Math.max(2.4, this.aircraft.body.length * 0.28);
+    p.agl = h.tel.radarAlt;
+    p.alive = !h.destroyed;
+    p.fragility = this.aircraft.damage.fragility;
+    // From the camera through the reticle.
+    const cam = this.engine.camera;
+    cam.updateMatrixWorld();
+    this.aimV.set(0, AIM_NDC_Y[this.rig.mode], 0.5).unproject(cam).sub(cam.position).normalize();
+    const ray = this.combatInput.ray!;
+    ray.ox = w.x; ray.oy = w.y; ray.oz = w.z;
+    ray.dx = this.aimV.x; ray.dy = this.aimV.y; ray.dz = this.aimV.z;
+    const inp = this.combatInput;
+    inp.gun = live && (this.gunHeld || this.sim.actions.isHeld('fireGun'));
+    inp.missile = live && this.missileQueued;
+    inp.flares = live && this.flaresQueued;
+    this.missileQueued = this.flaresQueued = false;
+    if (live) c.update(dt, p, inp, true);
+    else if (this.mode === 'menu' && dt > 0) c.update(dt, p, inp, false);
+    this.combatEvents = c.takeEvents();
+    this.combatView.update(this.paused ? 0 : dt, this.combatEvents, w.x, w.y, w.z);
+    if (this.combatView.kick > 0) {
+      this.rig.kick(this.combatView.kick);
+      this.combatView.kick = 0;
+    }
+    // Missiles leave their rails as they are fired.
+    const m = this.model.missiles;
+    const fired = m.length - c.missilesLeft;
+    for (let i = 0; i < m.length; i++) m[i].visible = i >= fired;
   }
 
   /** Clock, weather and wind: drive the sky, clouds, water and the flight model's air. */
@@ -465,6 +534,8 @@ export class Game {
     if (a === 'cameraNext' && this.mode === 'fly') this.rig.next();
     else if (a === 'landingLight') this.landingLightOn = !this.landingLightOn;
     else if (a === 'respawn' && this.mode === 'fly') this.respawn();
+    else if (a === 'fireMissile') this.fireMissile();
+    else if (a === 'flares') this.releaseFlares();
     this.onAction?.(a);
   }
 
@@ -497,6 +568,15 @@ export class Game {
       }
     }
     return { city: pick(3), town: pick(2), bridge };
+  }
+
+  /** The nearest compound still standing, for tests and screenshots. */
+  debugCompound(): { x: number; y: number; z: number; half: number; name: string } | undefined {
+    const p = this.sim.heli.pos;
+    const live = [...this.combat.compounds.values()].filter((c) => !c.destroyed);
+    live.sort((a, b) => Math.hypot(a.site.x - p.x, a.site.z - p.z) - Math.hypot(b.site.x - p.x, b.site.z - p.z));
+    const s = live[0]?.site;
+    return s && { x: s.x, y: s.y, z: s.z, half: s.half, name: s.name };
   }
 
   /** Teleport for tests and screenshots: hover at a world position and altitude above ground. */

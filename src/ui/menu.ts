@@ -1,4 +1,5 @@
 import { AIRCRAFT, AIRCRAFT_ORDER } from '../data/aircraft';
+import { armamentText } from '../data/weapons';
 import { GRAPHICS, type QualityName } from '../data/graphics';
 import { WEATHER, WEATHER_ORDER } from '../data/weather';
 import type { Settings } from '../game/settings';
@@ -72,6 +73,7 @@ const SPEC_ROWS: [string, (id: string) => string][] = [
   ['Range', (id) => `${fmt(Math.round(deriveAircraft(AIRCRAFT[id]).computed.range / 10) * 10)} km`],
   ['Hard landing limit', (id) => `${fmt(AIRCRAFT[id].damage.hardLanding, 1)} m/s`],
   ['Gear', (id) => (AIRCRAFT[id].gear.type === 'skids' ? 'Skids' : 'Wheels')],
+  ['Armament', (id) => armamentText(id)],
 ];
 
 /** The spawn menu: pick an aircraft, a place to start, a load, and fly. */

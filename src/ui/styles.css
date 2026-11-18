@@ -736,3 +736,275 @@ kbd {
   flex-direction: column;
   gap: 8px;
 }
+
+/* ---- Combat ------------------------------------------------------------------- */
+
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  color: rgba(255, 255, 255, 0.92);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.75));
+  transition: color 120ms ease-out;
+}
+.reticle svg {
+  display: block;
+  overflow: visible;
+}
+.reticle .ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+.reticle .dot {
+  fill: currentColor;
+}
+.reticle.on-target {
+  color: var(--danger);
+}
+.reticle.dead {
+  opacity: 0;
+}
+.reticle .hitmark line {
+  stroke: #fff;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+.reticle .hitmark {
+  opacity: 0;
+}
+.reticle .hitmark.on {
+  opacity: 1;
+}
+.reticle .hitmark.kill line {
+  stroke: var(--danger);
+  stroke-width: 3;
+}
+/* Threat ticks: where fire is coming from, relative to the view. */
+.reticle .tick {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 11px;
+  margin: -5.5px 0 0 -2px;
+  border-radius: 2px;
+  background: var(--warn);
+}
+.reticle .tick.missile {
+  background: var(--danger);
+  height: 15px;
+  animation: blink 0.32s steps(2, start) infinite;
+}
+
+.lockbox {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1.5px dashed var(--warn);
+  border-radius: 4px;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.7));
+}
+.lockbox span {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 4px;
+  font: 700 0.625rem/1 -apple-system, system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  color: var(--danger);
+  opacity: 0;
+}
+.lockbox.locked {
+  border: 2px solid var(--danger);
+}
+.lockbox.locked span {
+  opacity: 1;
+}
+
+.marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin: -6px 0 0 -40px;
+  width: 80px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+.marker b {
+  width: 9px;
+  height: 9px;
+  transform: rotate(45deg);
+  border: 1.5px solid #ff6a5f;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.marker.hot b {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.marker.edge {
+  opacity: 0.8;
+}
+
+.target-card {
+  left: 50%;
+  top: calc(35% + 42px);
+  transform: translateX(-50%);
+  min-width: 190px;
+  padding: 7px 12px 9px;
+  opacity: 0;
+  transition: opacity 140ms ease-out;
+}
+.target-card.on {
+  opacity: 1;
+}
+.target-card .name {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+.target-card .meta {
+  font-size: 0.6875rem;
+  color: var(--dim);
+  margin-bottom: 6px;
+}
+.target-card .bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+  overflow: hidden;
+}
+.target-card .bar i {
+  display: block;
+  height: 100%;
+  background: var(--danger);
+  transition: width 200ms var(--spring);
+}
+.target-card .bar i.mid {
+  background: var(--warn);
+}
+.target-card .bar i.low {
+  background: var(--ok);
+}
+
+.hud-weapons {
+  left: 16px;
+  bottom: 178px;
+  min-width: 228px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.hud-weapons .wrow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.hud-weapons .wrow b {
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+.hud-weapons .wrow.low b {
+  color: var(--warn);
+}
+.hud-weapons kbd {
+  white-space: nowrap;
+  font-size: 0.625rem;
+  color: var(--dim);
+}
+.hud-weapons .pips {
+  display: flex;
+  gap: 3px;
+}
+.hud-weapons .pips i {
+  width: 6px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--fill-strong);
+}
+.hud-weapons .pips i.full {
+  background: var(--text);
+}
+.hud-weapons .note {
+  font-size: 0.6875rem;
+  color: var(--dim);
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  top: 22%;
+  transform: translate(-50%, 6px) scale(0.96);
+  padding: 0.55rem 1.1rem;
+  border-radius: 999px;
+  font-size: 0.9375rem;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  background: var(--glass-heavy);
+  border: 1px solid var(--stroke);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  opacity: 0;
+  transition: opacity 260ms ease-out, transform 360ms var(--spring);
+}
+.toast.on {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+.toast.ok {
+  color: #04210d;
+  background: var(--ok);
+  border-color: transparent;
+}
+.toast.warn {
+  color: var(--warn);
+}
+
+.screen-flash,
+.hit-vignette {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+.screen-flash {
+  background: radial-gradient(circle at 50% 45%, rgba(255, 236, 200, 0.95), rgba(255, 170, 90, 0.55) 60%, rgba(255, 140, 60, 0.25));
+}
+.hit-vignette {
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 40, 30, 0.55) 100%);
+}
+
+.pill.blink {
+  animation: pill-in 220ms var(--spring) both, blink 0.5s steps(2, start) 220ms infinite;
+}
+@keyframes blink {
+  to { visibility: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pill.blink,
+  .reticle .tick.missile {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .hud-weapons {
+    bottom: auto;
+    top: 56px;
+  }
+  .marker span {
+    display: none;
+  }
+}

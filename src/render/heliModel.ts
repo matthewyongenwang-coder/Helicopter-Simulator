@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { AircraftData } from '../data/aircraft';
 import { AIRCRAFT_VISUAL, type Station } from '../data/aircraftVisual';
+import { LOADOUTS } from '../data/weapons';
+import { missileGeometry } from './ordnance';
 
 /** A built aircraft model with its moving parts exposed for animation. */
 export interface HeliModel {
@@ -31,6 +33,8 @@ export interface HeliModel {
   exhaust: THREE.Vector3;
   /** Painted and metal materials, so a wreck can be scorched. */
   materials: THREE.MeshStandardMaterial[];
+  /** Missiles on the rails, in firing order; hidden as they are fired. */
+  missiles: THREE.Object3D[];
   dispose(): void;
 }
 
@@ -361,11 +365,29 @@ export function buildHeliModel(d: AircraftData): HeliModel {
   }
   if (c.pillar > 0.7) frame(0.06, 1.1, 0.06, -eye.x, shieldY + 0.5, -c.reach - 0.2, -0.42);
 
+  const materials0: THREE.MeshStandardMaterial[] = [];
   const exhaust = new THREE.Vector3(0, v.mastBase + 0.1, Math.min(1.6, R * 0.12 + 0.5));
-  const materials = [body, paint, accent, dark, glass, bladeMat];
+  // Missiles on their rails, with a short launcher shoe above each.
+  const missiles: THREE.Object3D[] = [];
+  const rails = LOADOUTS[d.id]?.missile?.rails ?? [];
+  if (rails.length) {
+    const mGeo = keep(missileGeometry());
+    const mMat = keep(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.3 }));
+    const shoe = keep(new THREE.BoxGeometry(0.07, 0.1, 1.1));
+    for (const [x, y, z] of rails) {
+      const m = new THREE.Mesh(mGeo, mMat);
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      shell.add(m);
+      add(shoe, dark, shell, x, y + 0.14, z);
+      missiles.push(m);
+    }
+    materials0.push(mMat);
+  }
+  const materials = [body, paint, accent, dark, glass, bladeMat, ...materials0];
   return {
     root, exterior, shell, cockpit, rotor, blades, rotorBlur, tailRotor, tailBlades, tailBlur, eye, beacon, navLights, landingLight,
-    bladeTilts, droop: v.droop, exhaust, materials,
+    bladeTilts, droop: v.droop, exhaust, materials, missiles,
     dispose() {
       for (const o of owned) o.dispose();
       landingLight.dispose();

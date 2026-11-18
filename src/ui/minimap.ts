@@ -81,6 +81,9 @@ export class Minimap {
   }
 
   /** Draw the map around (x, z). `heading` in radians (0 = north, clockwise). */
+  /** Enemy compounds to mark: position and whether it still stands. */
+  compounds: { x: number; z: number; dead: boolean; hot: boolean }[] = [];
+
   draw(x: number, z: number, heading: number, last: { x: number; z: number } | null, wind: { x: number; z: number }): void {
     this.frame++;
     const c = this.ctx, S = this.size, dpr = this.dpr;
@@ -169,6 +172,34 @@ export class Minimap {
       c.strokeText(s.name, px, py - 10);
       c.fillStyle = s.kind === SettlementKind.City ? '#ffffff' : 'rgba(255,255,255,0.82)';
       c.fillText(s.name, px, py - 10);
+    }
+
+    // Enemy compounds.
+    for (const k of this.compounds) {
+      const px = mx(k.x), py = my(k.z);
+      if (px < -8 || py < -8 || px > S + 8 || py > S + 8) continue;
+      c.save();
+      c.translate(px, py);
+      if (k.dead) {
+        c.strokeStyle = 'rgba(20,20,20,0.85)';
+        c.lineWidth = 3;
+        c.beginPath();
+        c.moveTo(-4, -4); c.lineTo(4, 4); c.moveTo(4, -4); c.lineTo(-4, 4);
+        c.stroke();
+        c.strokeStyle = 'rgba(235,235,235,0.75)';
+        c.lineWidth = 1.5;
+        c.stroke();
+      } else {
+        c.rotate(Math.PI / 4);
+        c.fillStyle = k.hot ? '#ff453a' : '#e0443a';
+        c.strokeStyle = 'rgba(0,0,0,0.75)';
+        c.lineWidth = 1.5;
+        c.beginPath();
+        c.rect(-4.5, -4.5, 9, 9);
+        c.fill();
+        c.stroke();
+      }
+      c.restore();
     }
 
     // Last helipad (respawn point).

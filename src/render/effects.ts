@@ -194,8 +194,8 @@ export class Effects {
 
   constructor(private engine: Engine) {
     const q = engine.qualityName;
-    this.soft = new ParticlePool(engine, q === 'low' ? 700 : 1400, false);
-    this.fire = new ParticlePool(engine, q === 'low' ? 200 : 400, true);
+    this.soft = new ParticlePool(engine, q === 'low' ? 1600 : 3200, false);
+    this.fire = new ParticlePool(engine, q === 'low' ? 700 : 1400, true);
     this.drops = q === 'low' ? 1800 : q === 'medium' ? 3600 : 6000;
 
     this.rainOff = new Float32Array(this.drops * 3);
@@ -217,6 +217,16 @@ export class Effects {
     this.snow.renderOrder = 40;
     engine.scene.add(this.snow);
     engine.scene.add(this.flashLight);
+  }
+
+  /** Grey smoke, dust or spray: lit by the sky, drifting with the wind. */
+  smoke(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, s0: number, s1: number, r: number, g: number, b: number, a: number, drag = 0.6, buoy = 0): void {
+    this.soft.emit(x, y, z, vx, vy, vz, life, s0, s1, r, g, b, a, drag, buoy);
+  }
+
+  /** Fire, sparks and glows: additive and self-lit. */
+  glow(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, s0: number, s1: number, r: number, g: number, b: number, a: number, drag = 1.5, buoy = 0): void {
+    this.fire.emit(x, y, z, vx, vy, vz, life, s0, s1, r, g, b, a, drag, buoy);
   }
 
   /** Forget everything in flight (after a respawn). */

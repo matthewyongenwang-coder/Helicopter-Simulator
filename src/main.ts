@@ -3,8 +3,11 @@ import { AIRCRAFT } from './data/aircraft';
 import type { Action } from './data/controls';
 import type { QualityName } from './data/graphics';
 import { DAY_CYCLE } from './data/weather';
-import { Game, type SpawnLoad, type SpawnPoint } from './game/game';
+import * as THREE from 'three';
+import { Owner } from './game/combat';
+import { AIM_NDC_Y, Game, type SpawnLoad, type SpawnPoint } from './game/game';
 import { keyLabel, loadSettings, saveSettings } from './game/settings';
+import { CombatHud } from './ui/combatHud';
 import { Hud } from './ui/hud';
 import { el, Menu } from './ui/menu';
 import { ControlsOverlay } from './ui/overlays';
@@ -141,6 +144,82 @@ const hud = new Hud(ui, game.world, game.pool, (x, z, r) => game.helipads(x, z, 
   keys: keyLabels,
 });
 
+const combatHud = new CombatHud(ui);
+const projV = new THREE.Vector3();
+const camDir = new THREE.Vector3();
+/** World point → screen pixels. */
+const project = (x: number, y: number, z: number) => {
+  const o = game.engine.origin;
+  projV.set(x - o.x, y, z - o.z).project(game.engine.camera);
+  return { x: ((projV.x + 1) / 2) * window.innerWidth, y: ((1 - projV.y) / 2) * window.innerHeight, front: projV.z < 1 };
+};
+let beepTimer = 0;
+let crackTimer = 0;
+let tickTimer = 0;
+let mapTimer = 0;
+
+/** Sounds for this frame's shooting and blasts. */
+function combatAudio(dt: number): void {
+  const h = game.sim.heli, c = game.combat;
+  const heavy = (c.loadout.gun?.damage ?? 0) >= 10;
+  crackTimer -= dt;
+  tickTimer -= dt;
+  for (const e of game.combatEvents) {
+    const dist = 'x' in e ? Math.hypot(e.x - h.pos.x, e.y - h.pos.y, e.z - h.pos.z) : 0;
+    switch (e.type) {
+      case 'gunFire': audio.gunShot(heavy); break;
+      case 'enemyFire': audio.enemyShot(e.dist, e.kind === Owner.Aaa); break;
+      case 'missileLaunch': audio.missileLaunch(e.enemy, dist); break;
+      case 'flare': audio.flarePop(); break;
+      case 'explosion': audio.boom(dist, e.size); break;
+      case 'partDestroyed': audio.boom(dist, e.size + 0.5); break;
+      case 'compoundDestroyed': {
+        const s = e.compound.site;
+        audio.boom(Math.hypot(s.x - h.pos.x, s.z - h.pos.z), 4.5);
+        break;
+      }
+      case 'flak': audio.boom(dist, 0.35); break;
+      case 'nearMiss':
+        if (crackTimer <= 0) {
+          audio.crack();
+          crackTimer = 0.06;
+        }
+        break;
+      case 'playerHit': audio.ping(e.missile); break;
+      case 'hitConfirm':
+        if (tickTimer <= 0 || e.kill) {
+          audio.tone(e.kill ? 1500 : 2300, 0.035, e.kill ? 0.09 : 0.04);
+          tickTimer = 0.07;
+        }
+        break;
+      case 'locked': audio.chime([1760, 1760], 0.07, 0.06); break;
+      case 'empty': audio.tone(260, 0.05, 0.1, 'square'); break;
+      default: break;
+    }
+  }
+  // Warning tones: fast for a missile in the air, slow for a radar lock.
+  beepTimer -= dt;
+  if (game.mode === 'fly' && !h.destroyed && !game.paused && beepTimer <= 0) {
+    if (c.incoming > 0) {
+      audio.tone(1250, 0.07, 0.07, 'square');
+      beepTimer = 0.16;
+    } else if (c.samLocking) {
+      audio.tone(880, 0.12, 0.05, 'square');
+      beepTimer = 0.7;
+    }
+  }
+}
+
+/** Warning pills for the HUD. */
+function combatPills(): [string, string][] {
+  const c = game.combat, k = keyLabels();
+  const out: [string, string][] = [];
+  if (c.incoming > 0) out.push(['warning blink', `Missile · ${k.flares} flares`]);
+  else if (c.samLocking) out.push(['caution', 'SAM radar lock']);
+  if (c.threats.length > 0 && c.incoming === 0) out.push(['caution', 'Under fire']);
+  return out;
+}
+
 controls = new ControlsOverlay(overlays, {
   bindings: () => settings.bindings,
   setBindings: (b: Record<Action, string[]>) => {
@@ -195,8 +274,30 @@ game.onFrame = (dt) => {
       turbulence: W.areaTurbulence + W.cur.gust,
       seed: seedText,
       mouseLook: mouseLooking(),
+      combat: combatPills(),
     }, dt);
+    const cam = game.engine.camera;
+    cam.getWorldDirection(camDir);
+    const fl = Math.hypot(camDir.x, camDir.z) || 1;
+    combatHud.update({
+      combat: game.combat,
+      events: game.combatEvents,
+      project,
+      aimNdcY: AIM_NDC_Y[game.rig.mode],
+      camFx: camDir.x / fl,
+      camFz: camDir.z / fl,
+      x: h.pos.x, y: h.pos.y, z: h.pos.z,
+      flash: game.combatView.screenFlash,
+      alive: !h.destroyed,
+      keys: keyLabels(),
+    }, dt);
+    mapTimer -= dt;
+    if (mapTimer <= 0) {
+      mapTimer = 0.5;
+      hud.minimap.compounds = [...game.combat.compounds.values()].map((c) => ({ x: c.site.x, z: c.site.z, dead: c.destroyed, hot: c.engaged }));
+    }
   }
+  combatAudio(dt);
   audio.update({
     dt,
     rotorN: h.rotorN,
@@ -228,6 +329,9 @@ let dragging = false;
 /** The browser refused pointer lock (some embedded browsers do): follow plain mouse movement instead. */
 let lockRefused = false;
 document.addEventListener('pointerlockerror', () => (lockRefused = true));
+document.addEventListener('pointerlockchange', () => {
+  if (document.pointerLockElement !== canvas) game.gunHeld = false;
+});
 const mouseCaptured = () => document.pointerLockElement === canvas;
 /** The view follows the mouse without a button: captured, or hovering the view where capture is refused. */
 const mouseLooking = () => mouseCaptured() || (lockRefused && hovering && game.mode === 'fly' && !controls.isOpen && !game.sim.heli.destroyed);
@@ -245,10 +349,17 @@ function captureMouse(): void {
 function releaseMouse(): void {
   if (mouseCaptured()) document.exitPointerLock();
   dragging = false;
+  game.gunHeld = false;
 }
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
   if (controls.isOpen) return;
+  // Once the view follows the mouse, the buttons are the triggers: left gun, right missile.
+  if (mouseLooking() && game.mode === 'fly' && !game.paused) {
+    if (e.button === 0) game.gunHeld = true;
+    else if (e.button === 2) game.fireMissile();
+    return;
+  }
   if (game.mode === 'fly' && !mouseCaptured()) captureMouse();
   if (!mouseCaptured() && (e.button === 0 || e.button === 2)) {
     dragging = true;
@@ -258,6 +369,9 @@ canvas.addEventListener('pointerdown', (e) => {
       // A pointer-lock request is in flight; the drag still works without capture.
     }
   }
+});
+document.addEventListener('pointerup', (e) => {
+  if (e.button === 0) game.gunHeld = false;
 });
 canvas.addEventListener('pointerup', (e) => {
   if (!dragging) return;
@@ -281,4 +395,4 @@ if (autostart) {
 game.start();
 
 // Handle for the end-to-end tests and for poking at the game from the console.
-Object.assign(window, { __game: game, __menu: menu, __settings: settings, __hud: hud, __audio: audio, __controls: controls });
+Object.assign(window, { __combatHud: combatHud, __game: game, __menu: menu, __settings: settings, __hud: hud, __audio: audio, __controls: controls });
