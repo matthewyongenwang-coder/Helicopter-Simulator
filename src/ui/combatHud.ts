@@ -129,6 +129,9 @@ export class CombatHud {
         this.cardFor = e.compound;
         this.cardTimer = 4;
       }
+      else if (e.type === 'compoundRespawned') {
+        if (e.compound.dist < 9000) this.say(`${e.compound.site.name} reoccupied`, 'warn');
+      }
       else if (e.type === 'empty') {
         const msg = e.weapon === 'gun' ? 'Gun empty' : e.weapon === 'missile' ? (c.loadout.missile ? 'No missiles left' : 'No missiles on this aircraft') : 'No flares left';
         // Point the way to a reload, once in a while.
@@ -334,7 +337,8 @@ export class CombatHud {
       el('div', { class: `wrow${low ? ' low' : ''}` }, el('span', { class: 'label' }, label), typeof value === 'string' ? el('b', { class: 'num' }, value) : value, el('kbd', {}, hint));
     if (L.gun) rows.push(row('Gun', String(c.gunAmmo), `Click · ${k.fireGun}`, c.gunAmmo < L.gun.ammo * 0.15));
     if (L.missile) {
-      const pips = el('b', { class: 'pips' });
+      // A big rack gets slimmer pips so the row keeps its width.
+      const pips = el('b', { class: L.missile.rails.length > 12 ? 'pips dense' : 'pips' });
       for (let i = 0; i < L.missile.rails.length; i++) pips.append(el('i', { class: i < c.missilesLeft ? 'full' : '' }));
       rows.push(row(c.lock.locked ? 'Missile · Lock' : 'Missile', pips, `Right click · ${k.fireMissile}`, c.missilesLeft === 0));
     }

@@ -466,6 +466,14 @@ export class CombatView {
         this.views.delete(id);
         continue;
       }
+      // Rebuilt by the enemy: throw away the ruin and put the compound up fresh.
+      if (v.dead && !v.state.destroyed) {
+        this.dispose(v);
+        const nv = this.build(v.state);
+        this.views.set(id, nv);
+        nv.group.position.set(s.x - o.x, 0, s.z - o.z);
+        continue;
+      }
       v.group.position.set(s.x - o.x, 0, s.z - o.z);
       if (v.state.destroyed && !v.dead) this.ruin(v, true);
       // Turn the guns and launchers, flutter the flag, spin the radar.
@@ -612,6 +620,12 @@ export class CombatView {
       case 'compoundDestroyed':
         this.megaExplosion(e.compound);
         break;
+      case 'compoundRespawned': {
+        // The fires and the smoke column over the old ruin go out.
+        const s = e.compound.site, r = s.half * 1.8;
+        for (const f of this.fires) if (Math.hypot(f.x - s.x, f.z - s.z) < r) f.until = Math.min(f.until, this.time);
+        break;
+      }
       case 'missileLaunch':
         for (let k = 0; k < (e.enemy ? 14 : 5); k++) fx.smoke(e.x, e.y, e.z, (r() - 0.5) * 6, r() * 3, (r() - 0.5) * 6, 2.5 + r() * 2, 1, e.enemy ? 8 : 4, 0.85, 0.84, 0.82, 0.5, 0.8, 0.5);
         fx.glow(e.x, e.y, e.z, 0, 0, 0, 0.12, e.enemy ? 5 : 2.5, 1, 1, 0.75, 0.4, 1, 0);

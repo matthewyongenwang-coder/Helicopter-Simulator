@@ -1158,6 +1158,12 @@ kbd {
   border-radius: 2px;
   background: var(--fill-strong);
 }
+.hud-weapons .pips.dense {
+  gap: 2px;
+}
+.hud-weapons .pips.dense i {
+  width: 3px;
+}
 .hud-weapons .pips i.full {
   background: var(--text);
 }

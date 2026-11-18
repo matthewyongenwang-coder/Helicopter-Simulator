@@ -55,7 +55,7 @@ the attitude of the aircraft; all motion comes from where the thrust points.
 | **M** | Minimap zoom |
 | **H** or **F1** | Controls overlay (rebind any key here) |
 | Left click / **F** | Fire the gun (hold) |
-| Right click / **G** | Fire a missile |
+| Right click / **G** | Fire a missile (hold to ripple-fire) |
 | **K** | Release flares |
 | **R** | Respawn at the last helipad you landed on |
 | **Esc** / **P** | Menu (with Resume) |
@@ -90,6 +90,7 @@ the change under way, if one is), and the wind.
 | Nightjar | Medium assault | The all-rounder |
 | Atlas | Heavy lift | Huge, sluggish, very powerful |
 | Shrike | Attack | Agile and tough |
+| Mantis | Heavy gunship | Heavier, 24 missiles |
 | Petrel | Rescue / medevac | Fast, long range |
 
 The menu compares their specs in a table. Climb rate, hover ceiling and range are
@@ -110,11 +111,13 @@ low, terrain-masked flight is the way in.
 | Wasp | 12.7 mm gun pods, 2 missiles | 30 |
 | Nightjar | 20 mm turret, 4 missiles | 60 |
 | Shrike | 30 mm chin turret, 8 missiles | 60 |
+| Mantis | 30 mm chin turret, 24 missiles | 90 |
 | Mule, Atlas, Petrel | Unarmed | 30–90 |
 
 The reticle shows where you are aiming: the guns fire where you look (turrets traverse,
 fixed pods only a little). Hold the reticle near a target and the missile seeker locks on
-(the box closes and turns red); a missile fired without a lock flies to the reticle. When a
+(the box closes and turns red); a missile fired without a lock flies to the reticle. Hold the missile button to
+ripple-fire: the Mantis empties all 24 rails in about five seconds. When a
 SAM launches you hear a fast warning tone and see a red tick around the reticle pointing at
 it. Press **K** to dump flares, which pull most missiles off. Parts of a compound burn and
 blow up as you hit them, and fuel and ammunition take their neighbours with them. Break it
@@ -122,7 +125,9 @@ below 40 % and the whole compound goes up, then burns for minutes under a column
 A missile's blast also shakes the whole compound, so two or three well-placed missiles bring
 one down. Put the reticle on a compound (or lock a missile onto it) and a card at the top of
 the screen names it and shows its strength, marked **Raiding** while it stands and
-**Secured** once it falls.
+**Secured** once it falls. Two minutes after it falls the enemy moves back in: once you are
+more than 1.2 km away the compound is rebuilt at full strength, and a **reoccupied** notice
+tells you it is hostile again.
 
 **Supply points** (a green cross on a painted apron, crates and a blinking green beacon;
 green tiles on the minimap, and a green marker on screen for the nearest) stand in open
@@ -188,13 +193,13 @@ covers what was verified, the design decisions and the known issues.
 
 ## Tests
 
-- `npm test` runs 121 Vitest tests: engine start, lift-off only in the green, manual flight
+- `npm test` runs 123 Vitest tests: engine start, lift-off only in the green, manual flight
   without self-levelling, a full loop with no warning, autohover from a steep tilt in under
   2 s, each autohover axis, ground effect, translational lift, no rotor droop at full
   collective, autorotation, contact and
-  damage, the six aircraft against each other, seeded worlds, settlements and bridges,
+  damage, the seven aircraft against each other, seeded worlds, settlements and bridges,
   weather and turbulence, compound placement, aiming and missile lock, enemy fire, flares,
-  and destroying a compound.
+  destroying a compound, its rebuild, and ripple fire.
 - `node tests/e2e/combat.mjs` flies the Shrike at a compound in headless Chromium: it is
   engaged, dodges a SAM with flares, destroys the compound with guns and missiles, and
   saves screenshots of the explosion to `tests/e2e/out/`.

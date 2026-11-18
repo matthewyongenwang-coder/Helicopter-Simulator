@@ -40,6 +40,8 @@ export interface CombatInput {
   /** Missile and flare buttons pressed this frame. */
   missile: boolean;
   flares: boolean;
+  /** Missile button held down: ripple fire as fast as the rails reload. */
+  missileHeld?: boolean;
   /** The sight line: from the camera through the reticle (unit direction). */
   ray: { ox: number; oy: number; oz: number; dx: number; dy: number; dz: number } | null;
 }
@@ -97,6 +99,8 @@ export interface CompoundState {
    * whole compound, so a heavy warhead is not wasted on a light target.
    */
   structural: number;
+  /** Combat clock time at which a fallen compound is rebuilt. */
+  respawnAt: number;
 }
 
 export const enum Owner {
@@ -168,6 +172,7 @@ export type CombatEvent =
   | { type: 'explosion'; x: number; y: number; z: number; size: number }
   | { type: 'partDestroyed'; x: number; y: number; z: number; size: number; part: PartState; compound: CompoundState }
   | { type: 'compoundDestroyed'; compound: CompoundState }
+  | { type: 'compoundRespawned'; compound: CompoundState }
   | { type: 'missileLaunch'; enemy: boolean; x: number; y: number; z: number }
   | { type: 'flare'; x: number; y: number; z: number }
   | { type: 'playerHit'; amount: number; fromX: number; fromZ: number; missile: boolean }
@@ -227,6 +232,8 @@ export class Combat {
   missilesLeft = 0;
   flaresLeft = 0;
   destroyedCount = 0;
+  /** Seconds of combat so far: the clock compound rebuilds run on. */
+  time = 0;
   /** Threat picture for the warning system. */
   samLocking = false;
   incoming = 0;
@@ -350,9 +357,11 @@ export class Combat {
 
   update(dt: number, p: PlayerState, input: CombatInput, live: boolean): void {
     if (dt <= 0) return;
+    this.time += dt;
     this.refreshTimer -= dt;
     if (this.refreshTimer <= 0) {
       this.refreshTimer = 1;
+      this.respawnDue(p);
       this.refresh(p);
     }
     for (const c of this.active) c.dist = Math.hypot(c.site.x - p.x, c.site.z - p.z);
@@ -391,7 +400,7 @@ export class Combat {
       };
     });
     const maxHp = parts.reduce((s, q) => s + q.hp, 0);
-    const c: CompoundState = { site, parts, hp: maxHp, maxHp, structural: 0, destroyed: false, sees: false, seeTimer: this.rand() * 0.4, dist: Infinity, engaged: false };
+    const c: CompoundState = { site, parts, hp: maxHp, maxHp, structural: 0, destroyed: false, sees: false, seeTimer: this.rand() * 0.4, dist: Infinity, engaged: false, respawnAt: Infinity };
     this.compounds.set(site.id, c);
     return c;
   }
@@ -432,9 +441,42 @@ export class Combat {
       q.hp = 0;
     }
     c.hp = 0;
+    c.respawnAt = this.time + COMPOUNDS.respawnTime;
     this.destroyedCount++;
     this.events.push({ type: 'compoundDestroyed', compound: c });
     for (const m of this.missiles) if (m.source && c.parts.includes(m.source)) m.source = null;
+  }
+
+  /** Fallen compounds whose time is up are rebuilt, once the aircraft is well clear of them. */
+  private respawnDue(p: PlayerState): void {
+    for (const c of this.compounds.values()) {
+      if (!c.destroyed || this.time < c.respawnAt) continue;
+      if (Math.hypot(c.site.x - p.x, c.site.z - p.z) < COMPOUNDS.respawnClear) continue;
+      this.respawnCompound(c);
+    }
+  }
+
+  /** The enemy moves back in: every part stands again at full strength, guns cold. */
+  respawnCompound(c: CompoundState): void {
+    if (!c.destroyed) return;
+    for (const q of c.parts) {
+      q.hp = q.type.hp;
+      q.dead = false;
+      q.aimYaw = q.def.yaw;
+      q.aimPitch = 0.25;
+      q.cool = 1 + this.rand() * 2;
+      q.burst = 0;
+      q.lock = 0;
+      q.reload = 3;
+      q.flash = 9;
+    }
+    c.structural = 0;
+    c.hp = c.maxHp;
+    c.destroyed = false;
+    c.sees = false;
+    c.engaged = false;
+    c.respawnAt = Infinity;
+    this.events.push({ type: 'compoundRespawned', compound: c });
   }
 
   /** Blast damage to every part within `radius` of a point. */
@@ -646,9 +688,11 @@ export class Combat {
     }
 
     this.missileTimer -= dt;
-    if (input.missile && p.alive) {
-      if (!L.missile || this.missilesLeft <= 0) this.events.push({ type: 'empty', weapon: 'missile' });
-      else if (this.missileTimer <= 0) this.fireMissile(p);
+    if ((input.missile || input.missileHeld) && p.alive) {
+      // Only a fresh press reports an empty rack, so holding the button does not drone.
+      if (!L.missile || this.missilesLeft <= 0) {
+        if (input.missile) this.events.push({ type: 'empty', weapon: 'missile' });
+      } else if (this.missileTimer <= 0) this.fireMissile(p);
     }
 
     this.flareCool -= dt;

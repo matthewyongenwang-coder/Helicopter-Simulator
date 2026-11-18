@@ -85,6 +85,8 @@ export class Game {
   supplyEvents: SupplyEvent[] = [];
   /** Mouse trigger (left button held), and one-shot missile and flare requests. */
   gunHeld = false;
+  /** Right mouse button held: ripple the missiles. */
+  missileHeld = false;
   private missileQueued = false;
   private flaresQueued = false;
   private readonly player: PlayerState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, qx: 0, qy: 0, qz: 0, qw: 1, radius: 3, agl: 0, alive: true, fragility: 1 };
@@ -229,7 +231,7 @@ export class Game {
     this.combat.arm(data.id);
     this.combatView.reset();
     this.supply.reset();
-    this.gunHeld = this.missileQueued = this.flaresQueued = false;
+    this.gunHeld = this.missileHeld = this.missileQueued = this.flaresQueued = false;
     this.rig.reset();
     this.flightTime = 0;
     this.padTimer = 0;
@@ -443,6 +445,7 @@ export class Game {
     const inp = this.combatInput;
     inp.gun = live && (this.gunHeld || this.sim.actions.isHeld('fireGun'));
     inp.missile = live && this.missileQueued;
+    inp.missileHeld = live && (this.missileHeld || this.sim.actions.isHeld('fireMissile'));
     inp.flares = live && this.flaresQueued;
     this.missileQueued = this.flaresQueued = false;
     if (live) c.update(dt, p, inp, true);

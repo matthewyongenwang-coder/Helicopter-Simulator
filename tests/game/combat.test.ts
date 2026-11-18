@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ENEMY } from '../../src/data/weapons';
+import { COMPOUNDS, ENEMY, LOADOUTS } from '../../src/data/weapons';
 import { Combat, compoundHealth, type CombatEvent, type CombatInput, type PlayerState } from '../../src/game/combat';
 import { compoundsNear, PART_TYPES, type CompoundSite } from '../../src/world/compounds';
 import { rng } from '../../src/world/rng';
@@ -126,5 +126,45 @@ describe('combat', () => {
     expect(fired).toBe(true);
     expect(decoyed).toBeGreaterThan(0);
     expect(combat.flaresLeft).toBeLessThan(60);
+  });
+
+  it('a fallen compound is rebuilt once the aircraft is well away', () => {
+    const { combat, p } = setup(1600, 160);
+    const idle = () => ({ gun: false, missile: false, flares: false, ray: null });
+    run(combat, p, 0.1, idle);
+    const c = combat.compounds.get(site.id)!;
+    combat.destroyCompound(c);
+    combat.takeEvents();
+    // Not before its time.
+    run(combat, p, COMPOUNDS.respawnTime - 5, idle);
+    expect(c.destroyed).toBe(true);
+    // Time is up, but the aircraft is overhead: it waits.
+    const over = player(200, 150);
+    run(combat, over, 10, idle);
+    expect(c.destroyed).toBe(true);
+    // Fly off and the enemy moves back in, every part standing.
+    const events = run(combat, player(COMPOUNDS.respawnClear + 400, 150), 2, idle);
+    expect(events.some((e) => e.type === 'compoundRespawned')).toBe(true);
+    expect(c.destroyed).toBe(false);
+    expect(c.parts.every((q) => !q.dead && q.hp === q.type.hp)).toBe(true);
+    expect(compoundHealth(c)).toBe(1);
+    // And it can be taken again.
+    combat.destroyCompound(c);
+    expect(combat.destroyedCount).toBe(2);
+  });
+
+  it('the gunship ripples its 24 missiles while the trigger is held', () => {
+    const { combat, p } = setup(2500, 200);
+    combat.arm('gunship');
+    const rack = LOADOUTS.gunship.missile!.rails.length;
+    expect(rack).toBe(24);
+    expect(combat.missilesLeft).toBe(rack);
+    let empties = 0;
+    run(combat, p, 8, (t) => ({ gun: false, missile: t < 1 / 60, missileHeld: true, flares: false, ray: null }), (e) => {
+      empties += e.filter((x) => x.type === 'empty').length;
+    });
+    expect(combat.missilesLeft).toBe(0);
+    // Holding on an empty rack does not keep sounding the empty tone.
+    expect(empties).toBe(0);
   });
 });

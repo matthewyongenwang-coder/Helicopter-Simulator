@@ -23,14 +23,14 @@ function allDistinct(v: Record<string, number>, margin: number): boolean {
   return true;
 }
 
-describe('the six aircraft', () => {
+describe('the seven aircraft', () => {
   it('have distinct specifications', () => {
-    expect(AIRCRAFT_ORDER.length).toBe(6);
+    expect(AIRCRAFT_ORDER.length).toBe(7);
     const mass = each((id) => deriveAircraft(AIRCRAFT[id]).stdMass);
     const power = each((id) => AIRCRAFT[id].engine.powerKW);
     const rotor = each((id) => AIRCRAFT[id].rotor.diameter);
     expect(allDistinct(mass, 0.005)).toBe(true);
-    expect(new Set(Object.values(power)).size).toBe(6);
+    expect(new Set(Object.values(power)).size).toBe(7);
     expect(new Set(Object.values(rotor)).size).toBeGreaterThanOrEqual(5);
     expect(mass.heavy).toBeGreaterThan(3 * mass.medium);
     expect(mass.scout).toBeLessThan(mass.utility / 2.5);

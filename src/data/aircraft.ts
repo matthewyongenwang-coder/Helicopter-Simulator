@@ -306,6 +306,39 @@ const rescue: AircraftData = {
   damage: { fragility: 0.9, hardLanding: 3.8, crash: 12.5 },
 };
 
-export const AIRCRAFT: Record<string, AircraftData> = { scout, utility, medium, heavy, attack, rescue };
-export const AIRCRAFT_ORDER = ['scout', 'utility', 'medium', 'heavy', 'attack', 'rescue'] as const;
+const gunship: AircraftData = {
+  id: 'gunship',
+  name: 'Mantis',
+  designation: 'GS-24',
+  role: 'Heavy gunship',
+  blurb: 'Four loaded pylons and 24 missiles. Hold the trigger and it ripples them off four a second.',
+  mass: { empty: 6900, maxTakeoff: 13200, crew: 200, payloadStd: 1700 },
+  fuel: { capacity: 1300, burnRated: 680, idleFraction: 0.28 },
+  rotor: { diameter: 15.6, blades: 5, chord: 0.55, tipSpeed: 221, hubHeight: 2.05 },
+  tail: { arm: 9.4, lowSpeedAuthority: 0.87, interlink: 0.25 },
+  engine: { count: 2, powerKW: 3300, spoolTime: 14, responseTau: 0.4 },
+  perf: { topSpeedKts: 152, vneKts: 186 },
+  handling: { pitchRate: 44, rollRate: 60, yawRate: 68, attTau: 0.14, yawTau: 0.27, collectiveRate: 0.42 },
+  autohover: { maxTilt: 48, maxRate: 190, authority: 2.0 },
+  body: { length: 15.8, width: 2.1, height: 4.0, sideDrag: 5.5, vertDrag: 7, gyration: 0.18 },
+  gear: {
+    type: 'wheels',
+    points: [
+      [-1.15, -1.75, -1.6],
+      [1.15, -1.75, -1.6],
+      [0, -1.75, 8.6],
+    ],
+    stroke: 0.4,
+  },
+  hull: [
+    [0, -0.5, -4.5, 0.75, 0],
+    [0, -0.4, 0.3, 0.85, 0],
+    [0, 0.3, 8.8, 0.4, 1],
+    [0, 2.1, 9.5, 0.34, 1],
+  ],
+  damage: { fragility: 0.6, hardLanding: 4.4, crash: 14.5 },
+};
+
+export const AIRCRAFT: Record<string, AircraftData> = { scout, utility, medium, heavy, attack, gunship, rescue };
+export const AIRCRAFT_ORDER = ['scout', 'utility', 'medium', 'heavy', 'attack', 'gunship', 'rescue'] as const;
 export type AircraftId = (typeof AIRCRAFT_ORDER)[number];

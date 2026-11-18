@@ -338,7 +338,7 @@ let dragging = false;
 let lockRefused = false;
 document.addEventListener('pointerlockerror', () => (lockRefused = true));
 document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement !== canvas) game.gunHeld = false;
+  if (document.pointerLockElement !== canvas) game.gunHeld = game.missileHeld = false;
 });
 const mouseCaptured = () => document.pointerLockElement === canvas;
 /** The view follows the mouse without a button: captured, or hovering the view where capture is refused. */
@@ -357,7 +357,7 @@ function captureMouse(): void {
 function releaseMouse(): void {
   if (mouseCaptured()) document.exitPointerLock();
   dragging = false;
-  game.gunHeld = false;
+  game.gunHeld = game.missileHeld = false;
 }
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('pointerdown', (e) => {
@@ -365,7 +365,10 @@ canvas.addEventListener('pointerdown', (e) => {
   // Once the view follows the mouse, the buttons are the triggers: left gun, right missile.
   if (mouseLooking() && game.mode === 'fly' && !game.paused) {
     if (e.button === 0) game.gunHeld = true;
-    else if (e.button === 2) game.fireMissile();
+    else if (e.button === 2) {
+      game.fireMissile();
+      game.missileHeld = true;
+    }
     return;
   }
   if (game.mode === 'fly' && !mouseCaptured()) captureMouse();
@@ -380,6 +383,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 document.addEventListener('pointerup', (e) => {
   if (e.button === 0) game.gunHeld = false;
+  if (e.button === 2) game.missileHeld = false;
 });
 canvas.addEventListener('pointerup', (e) => {
   if (!dragging) return;

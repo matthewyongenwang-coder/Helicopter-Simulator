@@ -113,7 +113,31 @@ export const LOADOUTS: Record<string, Loadout> = {
     dispensers: [[-0.6, -0.2, 3.0], [0.6, -0.2, 3.0]],
   },
   rescue: { flares: 30, salvo: 4, dispensers: [[-1.1, -0.5, 1.8], [1.1, -0.5, 1.8]] },
+  gunship: {
+    gun: {
+      name: '30 mm chin turret', rate: 10, ammo: 900, speed: 1050, damage: 16, splash: 3, spread: 0.003,
+      muzzles: [[0, -1.12, -5.6]], yawLimit: 110, pitchMin: -60, pitchMax: 18, tracerEvery: 2,
+    },
+    // Four pylons, each a pack of six; ripples out faster than the others' single rails.
+    missile: { ...hellfire(gunshipRails()), reload: 0.22 },
+    flares: 90,
+    salvo: 6,
+    dispensers: [[-0.7, -0.2, 3.2], [0.7, -0.2, 3.2]],
+  },
 };
+
+/** 24 rails: a 3 × 2 pack under each of four pylons, fired outside-in and left-right in turn. */
+function gunshipRails(): V3[] {
+  const rails: V3[] = [];
+  for (const pylon of [2.62, 1.5]) {
+    for (const y of [-0.62, -0.94]) {
+      for (const dx of [0.3, 0, -0.3]) {
+        rails.push([-(pylon + dx), y, -0.7], [pylon + dx, y, -0.7]);
+      }
+    }
+  }
+  return rails;
+}
 
 /** One-line summary for the menu. */
 export function armamentText(id: string): string {
@@ -192,6 +216,10 @@ export const COMPOUNDS = {
   breakAt: 0.4,
   /** Share of a blast's overkill (damage past what a part could take) that counts against the whole compound. */
   structuralShare: 0.6,
+  /** Seconds after it falls before the enemy moves back in and rebuilds it. */
+  respawnTime: 120,
+  /** It only rebuilds while the aircraft is at least this far away, so it never appears under the nose. */
+  respawnClear: 1200,
 };
 
 /** Supply points: where they stand, and how quickly they patch up, refuel and rearm a landed aircraft. */
