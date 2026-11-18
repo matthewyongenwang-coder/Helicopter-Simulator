@@ -30,7 +30,7 @@ Other scripts:
 | `npm run e2e` | Load the game in headless Chromium, fly it, check frame rate and errors, save screenshots to `tests/e2e/out/` |
 
 URL parameters: `?seed=K7M2-QX9` (any text works), `quality=low|medium|high`,
-`aircraft=scout|utility|medium|heavy|attack|rescue`, `weather=clear|fair|overcast|rain|storm|fog|snow`,
+`aircraft=scout|utility|medium|heavy|attack|rescue`, `weather=clear|fair|gale|mist|overcast|showers|rain|storm|fog|snow`,
 `hour=0–24`, `autostart=1` (skip the menu).
 
 ## Flying
@@ -136,10 +136,13 @@ are forests, helipads, power lines, wind farms and boats. Terrain is meshed in W
 streamed as a level-of-detail quadtree, and drawn around a floating origin, so there is
 no edge and no precision jitter.
 
-Weather is either changing (it blends between presets) or fixed in the menu: clear,
-fair, overcast, rain, storm (with lightning and thunder), fog or snow. A day passes in
-48 minutes. Wind veers and gusts, and the air is rougher over mountains and cities,
-bumpy with thermals over sunny land, and calmer over water.
+Weather is either changing (a new spell every one to three minutes, blended over 40
+seconds) or fixed in the menu: clear, fair, gale, mist, overcast, showers, rain, storm
+(with lightning and thunder), fog or snow. No two spells are drawn quite alike, and
+within one the cloud, haze, gusts and rain swell and ease; showers come and go. A day
+passes in about 12 minutes, with nights running faster than daylight. Wind veers and
+gusts, and the air is rougher over mountains and cities, bumpy with thermals over sunny
+land, and calmer over water.
 
 ## Architecture
 

@@ -44,16 +44,33 @@ describe('weather', () => {
       maxStep = Math.max(maxStep, Math.abs(w.cur.cover - prevCover));
       prevCover = w.cur.cover;
     }
-    expect(seen.size).toBeGreaterThanOrEqual(4);
-    // Blends are gradual: cover never jumps by more than a few percent in a second.
-    expect(maxStep).toBeLessThan(0.03);
+    expect(seen.size).toBeGreaterThanOrEqual(7);
+    // Blends and swells are gradual: cover never jumps by more than a few percent in a second.
+    expect(maxStep).toBeLessThan(0.045);
   });
 
-  it('a fixed preset stays put, with its wind and precipitation', () => {
+  it('changes often in auto mode: several spells an hour', () => {
+    const w = new WeatherSystem(4, 'auto', 10);
+    let changes = 0, last = w.target;
+    for (let t = 0; t < 3600; t += 1) {
+      w.update(1, world, 0, 0, 100);
+      if (w.target !== last) (changes++, (last = w.target));
+    }
+    expect(changes).toBeGreaterThanOrEqual(14);
+  });
+
+  it('a fixed preset stays put, with its wind and precipitation, but swells within it', () => {
     const w = new WeatherSystem(5, 'storm', 14);
-    for (let i = 0; i < 600; i++) w.update(1, world, 0, 0, 100);
+    let lo = 1, hi = 0;
+    for (let i = 0; i < 600; i++) {
+      w.update(1, world, 0, 0, 100);
+      lo = Math.min(lo, w.cur.precip);
+      hi = Math.max(hi, w.cur.precip);
+    }
     expect(w.target).toBe('storm');
-    expect(w.cur.precip).toBe(WEATHER.storm.precip);
+    expect(lo).toBeGreaterThan(0.2);
+    expect(hi).toBeLessThanOrEqual(1);
+    expect(hi - lo).toBeGreaterThan(0.1);
     expect(w.windSpeed).toBeGreaterThanOrEqual(WEATHER.storm.wind[0] - 0.5);
     expect(w.windSpeed).toBeLessThanOrEqual(WEATHER.storm.wind[1] + 0.5);
   });
@@ -70,10 +87,15 @@ describe('weather', () => {
     expect(strikes('clear')).toBe(0);
   });
 
-  it('the clock runs a full day in 24 × secondsPerHour', () => {
-    const w = new WeatherSystem(1, 'clear', 6);
-    for (let i = 0; i < 24 * DAY_CYCLE.secondsPerHour; i++) w.update(1, world, 0, 0, 100);
-    expect(Math.abs(w.hour - 6)).toBeLessThan(0.01);
+  it('the clock runs secondsPerHour by day and nightSpeed times faster at night', () => {
+    const hourTakes = (from: number) => {
+      const w = new WeatherSystem(1, 'clear', from);
+      let t = 0;
+      while (w.hour < from + 1) (w.update(0.1, world, 0, 0, 100), (t += 0.1));
+      return t;
+    };
+    expect(hourTakes(12)).toBeCloseTo(DAY_CYCLE.secondsPerHour, 0);
+    expect(hourTakes(1)).toBeCloseTo(DAY_CYCLE.secondsPerHour / DAY_CYCLE.nightSpeed, 0);
   });
 });
 
