@@ -179,11 +179,11 @@ export const PVP = {
   gunScale: 0.0015,
   /** Chance a gun hit takes out the tail rotor. */
   gunCrit: 0.03,
-  /** A missile bursting right on an aircraft; less the further off it passes. */
-  missileDamage: 0.6,
-  missileCrit: 0.15,
-  /** Proximity fuse radius, m. */
-  fuse: 8,
+  /** A missile bursting right on an aircraft; less the further off it passes. Hits hard. */
+  missileDamage: 0.8,
+  missileCrit: 0.25,
+  /** Proximity fuse radius, m: it has to get close, but when it does it counts. */
+  fuse: 6,
   /** Chance a missile chasing a pilot takes a flare they drop (rolled at most every 0.7 s). */
   decoy: 0.7,
   /** Hits are summed and sent this often, s. */
@@ -198,6 +198,25 @@ export const PVP = {
   spawnGrace: 5,
   /** Pilots within this range get a marker over their aircraft, m. */
   markerRange: 3000,
+};
+
+/**
+ * How a missile's seeker follows an aircraft (an aircraft, not a compound: missiles fired
+ * at the ground keep their full accuracy). The seeker sees the target late, the fins pull
+ * less, and a target that swings far off the missile's nose is lost, so a hard, well-timed
+ * break or flip in the last second or two can make it miss. Flares remain the sure answer.
+ */
+export const SEEKER = {
+  /**
+   * The seeker's picture of the target (position, velocity and turn) lags the real one by
+   * this much, s. Tuned so a steady turn or a single break is still hit, but a hard flip
+   * the other way about 1 to 1.5 s before impact makes it miss (tests/game/dodge.test.ts).
+   */
+  lag: 0.7,
+  /** Share of the fins' full turn available against an aircraft. */
+  turnScale: 0.5,
+  /** Off-nose angle beyond which the seeker loses the target, degrees. */
+  gimbal: 45,
 };
 
 export const ENEMY = {
@@ -221,8 +240,8 @@ export const ENEMY = {
     burn: 2.6,
     turn: 175,
     life: 13,
-    damage: 0.5,
-    fuse: 9,
+    damage: 0.7,
+    fuse: 6.5,
     /** Chance one flare salvo pulls a missile off. */
     decoy: 0.8,
   },

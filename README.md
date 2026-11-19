@@ -119,7 +119,9 @@ fixed pods only a little). Hold the reticle near a target and the missile seeker
 (the box closes and turns red); a missile fired without a lock flies to the reticle. Hold the missile button to
 ripple-fire: the Mantis empties all 24 rails in about five seconds. When a
 SAM launches you hear a fast warning tone and see a red tick around the reticle pointing at
-it. Press **K** to dump flares, which pull most missiles off. Parts of a compound burn and
+it. Press **K** to dump flares, which pull most missiles off. Without flares, a missile can
+still be dodged, barely: it tracks a steady turn, but a hard flip the other way a second or
+so before it arrives can make it miss. Parts of a compound burn and
 blow up as you hit them, and fuel and ammunition take their neighbours with them. Break it
 below 40 % and the whole compound goes up, then burns for minutes under a column of smoke.
 A missile's blast also shakes the whole compound, so two or three well-placed missiles bring
@@ -147,7 +149,8 @@ share a room. Your own compounds shoot only at you.
 
 Pilots can fight each other. Guns hit other aircraft, and the missile seeker locks on to a
 pilot inside its cone before any compound (the box frames them and turns red). A pilot with
-a missile locked on them gets the missile warning, and their flares can pull it away. When
+a missile locked on them gets the missile warning, and their flares can pull it away (or a
+well-timed hard flip; a missile that connects takes about three quarters of an airframe). When
 someone goes down, everyone sees who shot whom. Aircraft are solid: flying into another
 one wrecks you (two aircraft resting on the ground only nudge apart, and there is no
 collision for 5 s after a spawn). Any pilot within 3 km has a blue marker over their

@@ -222,6 +222,12 @@ Verified:
 - Mid-air collisions are checked by each game for its own aircraft (rotor discs meeting, or a
   knock faster than 6 m/s). Two aircraft on the ground only nudge apart; 5 s spawn grace.
 - Markers over pilots within 3 km (`PVP.markerRange`).
+- Missiles chasing an aircraft (other pilots' and SAMs) can be dodged, barely: the seeker
+  follows position, velocity and turn with a 0.7 s lag, the fins pull half as hard, and the
+  seeker loses a target more than 45 deg off its nose. A steady turn or a single break is
+  still hit; a 2 g flip the other way 1 to 1.5 s before impact misses (`tests/game/dodge.test.ts`).
+  Fuses are tighter (6 m) and hits harder (0.8 of an airframe for pilots' missiles, 0.7 SAM).
+  Missiles fired at compounds keep full accuracy.
 
 Verified: 5 new unit tests (gun hits, lock and missile kill, launch names the target,
 flare decoy, no hits on a wreck); the two-browser test adds 9 checks (marker at 60 m and

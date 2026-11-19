@@ -1,4 +1,4 @@
-import { COMPOUNDS, ENEMY, LOADOUTS, PVP, type EnemyGun, type Loadout } from '../data/weapons';
+import { COMPOUNDS, ENEMY, LOADOUTS, PVP, SEEKER, type EnemyGun, type Loadout } from '../data/weapons';
 import { compoundsNear, PART_TYPES, type CompoundPart, type CompoundSite, type PartType } from '../world/compounds';
 import { newSample } from '../world/terrain';
 import type { World } from '../world/world';
@@ -176,6 +176,8 @@ export interface Missile {
   source: PartState | null;
   /** Combat time a pilot's flare was last weighed against this missile. */
   decoyAt?: number;
+  /** The seeker's lagging picture of an aircraft target: position, velocity, acceleration, and the last true velocity. */
+  seen?: number[];
 }
 
 export interface Flare {
@@ -1197,10 +1199,12 @@ export class Combat {
       const burning = m.age < m.delay + spec.burn;
       m.speed = burning ? Math.min(spec.speed, m.speed + spec.accel * dt) : Math.max(60, m.speed - 18 * dt);
       // Where to go: a lead point on the target.
-      let tx = 0, ty = 0, tz = 0, tvx = 0, tvy = 0, tvz = 0, has = true;
+      let tx = 0, ty = 0, tz = 0, tvx = 0, tvy = 0, tvz = 0, tax = 0, tay = 0, taz = 0, has = true;
       const t = m.target;
+      let aircraft = false;
       if (t.kind === 'player' && p.alive) {
         tx = p.x; ty = p.y; tz = p.z; tvx = p.vx; tvy = p.vy; tvz = p.vz;
+        aircraft = true;
       } else if (t.kind === 'flare' && t.flare.age < t.flare.life) {
         const f = t.flare;
         tx = f.x; ty = f.y; tz = f.z; tvx = f.vx; tvy = f.vy; tvz = f.vz;
@@ -1210,18 +1214,47 @@ export class Combat {
         const q = this.pilots.find((o) => o.id === t.id && o.alive);
         if (q) {
           tx = q.x; ty = q.y; tz = q.z; tvx = q.vx; tvy = q.vy; tvz = q.vz;
+          aircraft = true;
         } else has = false;
       } else has = false;
+      if (has && aircraft) {
+        // Outside the seeker's field of view: the target is lost and the missile flies on blind.
+        const ox = tx - m.x, oy = ty - m.y, oz = tz - m.z;
+        const ol = Math.hypot(ox, oy, oz) || 1;
+        if ((ox * m.dx + oy * m.dy + oz * m.dz) / ol < Math.cos((SEEKER.gimbal * Math.PI) / 180) && m.age > m.delay + 0.6) {
+          m.target = { kind: 'none' };
+          has = false;
+        } else {
+          // The seeker's picture runs late. It follows position, velocity and turn rate, so a
+          // steady turn is tracked, but a sudden change (a break, a flip the other way) takes
+          // SEEKER.lag to register and can leave it pointing where the target used to be going.
+          const s = m.seen ?? (m.seen = [tx, ty, tz, tvx, tvy, tvz, 0, 0, 0, tvx, tvy, tvz]);
+          const k = 1 - Math.exp(-dt / SEEKER.lag);
+          const tv = [tvx, tvy, tvz], tp = [tx, ty, tz];
+          for (let i = 0; i < 3; i++) {
+            const meas = (tv[i] - s[9 + i]) / dt;
+            s[9 + i] = tv[i];
+            s[6 + i] += (Math.max(-60, Math.min(60, meas)) - s[6 + i]) * k;
+            s[i] += s[3 + i] * dt + 0.5 * s[6 + i] * dt * dt;
+            s[3 + i] += s[6 + i] * dt;
+            s[i] += (tp[i] - s[i]) * k;
+            s[3 + i] += (tv[i] - s[3 + i]) * k;
+          }
+          tx = s[0]; ty = s[1]; tz = s[2]; tvx = s[3]; tvy = s[4]; tvz = s[5];
+          tax = s[6]; tay = s[7]; taz = s[8];
+        }
+      }
       if (has) {
         const rx = tx - m.x, ry = ty - m.y, rz = tz - m.z;
         const range = Math.hypot(rx, ry, rz);
         const tgo = range / Math.max(80, m.speed);
-        const lx = rx + tvx * tgo, ly = ry + tvy * tgo, lz = rz + tvz * tgo;
+        const h2 = 0.5 * tgo * tgo;
+        const lx = rx + tvx * tgo + tax * h2, ly = ry + tvy * tgo + tay * h2, lz = rz + tvz * tgo + taz * h2;
         const ll = Math.hypot(lx, ly, lz) || 1;
         // Turn toward it, as fast as the fins allow.
         const wx = lx / ll, wy = ly / ll, wz = lz / ll;
         const ang = Math.acos(Math.max(-1, Math.min(1, m.dx * wx + m.dy * wy + m.dz * wz)));
-        const maxTurn = (spec.turn / Math.max(60, m.speed)) * dt * (m.age < m.delay + 0.35 ? 0.4 : 1);
+        const maxTurn = ((spec.turn * (aircraft ? SEEKER.turnScale : 1)) / Math.max(60, m.speed)) * dt * (m.age < m.delay + 0.35 ? 0.4 : 1);
         if (ang > 1e-5) {
           const k = Math.min(1, maxTurn / ang);
           const ndx = m.dx + (wx - m.dx) * k, ndy = m.dy + (wy - m.dy) * k, ndz = m.dz + (wz - m.dz) * k;
