@@ -1238,22 +1238,37 @@ kbd {
 }
 
 /* Other pilots: a blue ring and their callsign, to read as "friend" against the red compounds. */
+/* Pilots within 3 km: a down-pointing chevron over the aircraft, clear against sky and ground. */
+.marker.pilot {
+  margin-top: -30px;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-direction: column-reverse;
+}
 .marker.pilot b {
   transform: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
+  width: 0;
+  height: 0;
+  border: none;
+  box-shadow: none;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 11px solid var(--accent);
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9));
 }
-.marker.pilot {
-  color: #c9efff;
-  white-space: nowrap;
+.marker.pilot span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(10, 40, 60, 0.62);
+  box-shadow: 0 0 0 1px rgba(100, 210, 255, 0.55);
 }
 .marker.pilot.dead {
   opacity: 0.55;
 }
 .marker.pilot.dead b {
-  border-color: var(--dim);
+  border-top-color: var(--dim);
 }
 .net-status {
   margin: 2px 0 8px;

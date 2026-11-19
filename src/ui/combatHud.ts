@@ -225,9 +225,9 @@ export class CombatHud {
 
   private updateLock(f: CombatHudFrame): void {
     const L = f.combat.lock;
-    const p = L.part;
-    const s = p && f.alive ? f.project(p.cx, p.cy, p.cz) : null;
-    if (!p || !s || !s.front) {
+    const p = L.part, q = L.pilot;
+    const s = !f.alive ? null : q ? f.project(q.x, q.y, q.z) : p ? f.project(p.cx, p.cy, p.cz) : null;
+    if ((!p && !q) || !s || !s.front) {
       this.lockBox.style.display = 'none';
       return;
     }

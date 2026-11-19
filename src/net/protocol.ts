@@ -32,6 +32,8 @@ export const Flag = {
   Powered: 8,
   RotorOk: 16,
   TailOk: 32,
+  /** Resting on its gear. */
+  OnGround: 64,
 } as const;
 
 /** A pilot's pose: position, rotation, velocity, rotor speed and state flags. */
@@ -51,7 +53,12 @@ export type GameEvent =
   | { k: 'part'; id: string; i: number }
   | { k: 'cmp'; id: string }
   | { k: 'boom'; x: number; y: number; z: number; s: number }
-  | { k: 'launch'; x: number; y: number; z: number }
+  /** A missile launch; `at` is the pilot it is locked on to, so they get a warning. */
+  | { k: 'launch'; x: number; y: number; z: number; at?: number }
+  /** The sender's shots hit pilot `to` for `a` of an airframe (`c` tail-rotor chance, `m` a missile). */
+  | { k: 'hit'; to: number; a: number; c: number; m: boolean }
+  /** The sender was shot down by pilot `by`. */
+  | { k: 'kill'; by: number }
   | { k: 'flare'; x: number; y: number; z: number };
 
 export interface EventMsg {
@@ -133,6 +140,8 @@ export function isPose(m: unknown): m is PoseMsg {
   return !!p && p.t === 'p' && typeof p.a === 'string' && p.a.length < 24 && Array.isArray(p.s) && p.s.length === 10 && p.s.every(Number.isFinite) && Number.isFinite(p.r) && Number.isFinite(p.f);
 }
 
+const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0 && (v as number) < 1e6;
+
 /** True when a decoded message is a well-formed game event. */
 export function isEvent(m: unknown): m is EventMsg {
   const e = (m as EventMsg)?.e as GameEvent | undefined;
@@ -141,8 +150,10 @@ export function isEvent(m: unknown): m is EventMsg {
     case 'part': return typeof e.id === 'string' && e.id.length < 64 && Number.isInteger(e.i) && e.i >= 0 && e.i < 256;
     case 'cmp': return typeof e.id === 'string' && e.id.length < 64;
     case 'boom': return [e.x, e.y, e.z, e.s].every(Number.isFinite);
-    case 'launch':
+    case 'launch': return [e.x, e.y, e.z].every(Number.isFinite) && (e.at === undefined || isId(e.at));
     case 'flare': return [e.x, e.y, e.z].every(Number.isFinite);
+    case 'hit': return isId(e.to) && Number.isFinite(e.a) && e.a > 0 && e.a <= 1 && Number.isFinite(e.c) && e.c >= 0 && e.c <= 1 && typeof e.m === 'boolean';
+    case 'kill': return isId(e.by);
     default: return false;
   }
 }

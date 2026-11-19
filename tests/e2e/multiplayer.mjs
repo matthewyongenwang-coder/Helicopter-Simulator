@@ -111,6 +111,60 @@ try {
   check(cSees, 'late joiner finds the compound already destroyed');
   check((await peers(c)).length === 2, 'late joiner sees both pilots');
 
+  // ---- Pilot against pilot --------------------------------------------------------
+  // Bravo back to 40 m in front of Alpha. Within 3 km, Alpha sees a marker; beyond it, none.
+  const home = await a.page.evaluate(() => { const p = window.__game.sim.heli.pos; return { x: p.x, z: p.z }; });
+  // Level with Alpha (which hovers 150 m up here), 60 m ahead.
+  await b.page.evaluate((s) => window.__game.setPose(s.x, s.z - 60, 152, 180, 0), home);
+  await a.page.waitForTimeout(1500);
+  const bravoId = await a.page.evaluate(() => [...window.__net().peers.values()].find((q) => q.name === 'Bravo').id);
+  const markerShown = () => a.page.$$eval('.marker.pilot', (ms) => ms.some((m) => m.style.display !== 'none' && m.textContent.startsWith('Bravo')));
+  check(await markerShown(), 'marker over Bravo at 60 m');
+  await a.page.screenshot({ path: join(out, 'mp-marker-near.png') });
+  await b.page.evaluate((s) => window.__game.setPose(s.x, s.z - 4000, 200, 180, 0), home);
+  await a.page.waitForTimeout(1500);
+  check(!(await markerShown()), 'no marker over Bravo at 4 km');
+  await b.page.evaluate((s) => window.__game.setPose(s.x, s.z - 2500, 200, 180, 0), home);
+  await a.page.waitForTimeout(1500);
+  check(await markerShown(), 'marker over Bravo at 2.5 km');
+  await a.page.screenshot({ path: join(out, 'mp-marker-far.png') });
+
+  // Alpha's shots land on Bravo: Bravo's game applies the damage.
+  const hp0 = await b.page.evaluate(() => window.__game.sim.heli.health);
+  await a.page.evaluate((id) => window.__game.combat.pvpHits.push({ id, amount: 0.2, crit: 0, missile: false }), bravoId);
+  await b.page.waitForFunction((h) => window.__game.sim.heli.health < h - 0.05, hp0, { timeout: 5000 }).then(
+    () => check(true, "Alpha's hit damages Bravo"),
+    () => check(false, "Alpha's hit damages Bravo"),
+  );
+  // A missile locked on Bravo warns Bravo.
+  await a.page.evaluate((id) => window.__net().client.send({ t: 'ev', e: { k: 'launch', x: 0, y: 100, z: 0, at: id } }), bravoId);
+  await b.page.waitForFunction(() => window.__game.combat.incoming > 0, null, { timeout: 5000 }).then(
+    () => check(true, 'a missile locked on Bravo sets off the warning'),
+    () => check(false, 'a missile locked on Bravo sets off the warning'),
+  );
+  // Enough to bring Bravo down: Bravo's game names Alpha, and everyone hears about it.
+  await a.page.evaluate((id) => { for (let k = 0; k < 3; k++) window.__game.combat.pvpHits.push({ id, amount: 0.8, crit: 0, missile: true }); }, bravoId);
+  await b.page.waitForFunction(() => window.__game.sim.heli.destroyed, null, { timeout: 5000 }).catch(() => {});
+  const reason = await b.page.evaluate(() => window.__game.sim.heli.destroyedReason);
+  check(/Alpha/.test(reason ?? ''), 'Bravo is shot down by Alpha', reason);
+  await a.page.waitForFunction(() => /You shot down Bravo/.test(document.querySelector('.toast')?.textContent ?? ''), null, { timeout: 5000 }).then(
+    () => check(true, 'Alpha is told "You shot down Bravo"'),
+    () => check(false, 'Alpha is told "You shot down Bravo"'),
+  );
+  await a.page.waitForFunction(() => [...window.__net().peers.values()].some((q) => q.name === 'Bravo' && !q.target.alive), null, { timeout: 5000 }).then(
+    () => check(true, 'Bravo shows as down for Alpha (no more hits on the wreck)'),
+    () => check(false, 'Bravo shows as down for Alpha (no more hits on the wreck)'),
+  );
+
+  // Mid-air: Charlie flies into Alpha. Both hover apart past the spawn grace, then Charlie closes in.
+  await a.page.evaluate((s) => window.__game.setPose(s.x, s.z, 150, 0, 0), home);
+  await c.page.evaluate((s) => window.__game.setPose(s.x + 200, s.z, 150, 0, 0), home);
+  await a.page.waitForTimeout(6000);
+  await c.page.evaluate((s) => window.__game.setPose(s.x + 2, s.z, 150, 0, 0), home);
+  await a.page.waitForFunction(() => window.__game.sim.heli.destroyed, null, { timeout: 8000 }).catch(() => {});
+  const crash = await a.page.evaluate(() => window.__game.sim.heli.destroyedReason);
+  check(/collision with Charlie/.test(crash ?? ''), 'flying into another aircraft is a mid-air collision', crash);
+
   // Leaving: Bravo closes, the others drop Bravo.
   await b.ctx.close();
   await a.page.waitForFunction(() => window.__net().peers.size === 1, null, { timeout: 10000 }).then(

@@ -143,8 +143,15 @@ Pilots on the same world seed fly together. Open the menu, set a callsign under
 same world, online. You see the others' aircraft, callsigns and minimap arrows, their
 gunfire, missiles, flares and explosions, and any compound part one pilot destroys is
 destroyed for everyone (a pilot who joins later finds the same wrecks). Up to 16 pilots
-share a room. Your own compounds shoot only at you, and other aircraft are not solid and
-cannot be shot.
+share a room. Your own compounds shoot only at you.
+
+Pilots can fight each other. Guns hit other aircraft, and the missile seeker locks on to a
+pilot inside its cone before any compound (the box frames them and turns red). A pilot with
+a missile locked on them gets the missile warning, and their flares can pull it away. When
+someone goes down, everyone sees who shot whom. Aircraft are solid: flying into another
+one wrecks you (two aircraft resting on the ground only nudge apart, and there is no
+collision for 5 s after a spawn). Any pilot within 3 km has a blue marker over their
+aircraft with their callsign and distance.
 
 The game stays a static site. A small relay on Cloudflare (`relay/`, one Durable Object per
 room) passes each pilot's updates to the others and remembers the wrecks; it runs no

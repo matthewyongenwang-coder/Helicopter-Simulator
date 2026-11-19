@@ -87,6 +87,15 @@ describe('messages', () => {
     expect(isEvent({ t: 'ev', e: { k: 'boom', x: 0, y: 0, z: 0, s: Infinity } })).toBe(false);
     expect(isEvent({ t: 'ev', e: { k: 'nuke' } })).toBe(false);
     expect(isEvent({ t: 'ev' })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'hit', to: 3, a: 0.25, c: 0.03, m: false } })).toBe(true);
+    expect(isEvent({ t: 'ev', e: { k: 'hit', to: 3, a: 5, c: 0, m: false } })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'hit', to: 3, a: -0.1, c: 0, m: false } })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'hit', to: 0, a: 0.1, c: 0, m: false } })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'hit', to: 3, a: 0.1, c: 0, m: 'yes' } })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'kill', by: 2 } })).toBe(true);
+    expect(isEvent({ t: 'ev', e: { k: 'kill', by: 'x' } })).toBe(false);
+    expect(isEvent({ t: 'ev', e: { k: 'launch', x: 0, y: 0, z: 0, at: 4 } })).toBe(true);
+    expect(isEvent({ t: 'ev', e: { k: 'launch', x: 0, y: 0, z: 0, at: -1 } })).toBe(false);
   });
 
   it('cleans callsigns and room codes', () => {

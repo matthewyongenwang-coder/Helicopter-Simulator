@@ -169,6 +169,37 @@ export interface EnemyGun {
   slew: number;
 }
 
+/**
+ * Pilot against pilot. The shooter's game decides hits on what it sees and tells
+ * the target, whose game applies the damage (scaled by its own aircraft's fragility).
+ * Damage is a fraction of a full airframe.
+ */
+export const PVP = {
+  /** Airframe damage per point of a gun's compound damage: a 30 mm round (16) takes about 2.4 %. */
+  gunScale: 0.0015,
+  /** Chance a gun hit takes out the tail rotor. */
+  gunCrit: 0.03,
+  /** A missile bursting right on an aircraft; less the further off it passes. */
+  missileDamage: 0.6,
+  missileCrit: 0.15,
+  /** Proximity fuse radius, m. */
+  fuse: 8,
+  /** Chance a missile chasing a pilot takes a flare they drop (rolled at most every 0.7 s). */
+  decoy: 0.7,
+  /** Hits are summed and sent this often, s. */
+  hitBatch: 0.1,
+  /** The largest single hit message a game accepts. */
+  maxHit: 0.8,
+  /** A hit counts toward a kill for this long, s. */
+  killCredit: 15,
+  /** Closing speed above which touching another aircraft wrecks you, m/s; any contact with a turning rotor does too. */
+  crashSpeed: 6,
+  /** No collisions for this long after a spawn, s. */
+  spawnGrace: 5,
+  /** Pilots within this range get a marker over their aircraft, m. */
+  markerRange: 3000,
+};
+
 export const ENEMY = {
   mg: {
     range: 1100, speed: 820, rate: 11, burstMin: 6, burstMax: 11, pauseMin: 1.3, pauseMax: 2.6,

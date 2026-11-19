@@ -1,4 +1,4 @@
-import { COMPOUNDS, ENEMY, LOADOUTS, type EnemyGun, type Loadout } from '../data/weapons';
+import { COMPOUNDS, ENEMY, LOADOUTS, PVP, type EnemyGun, type Loadout } from '../data/weapons';
 import { compoundsNear, PART_TYPES, type CompoundPart, type CompoundSite, type PartType } from '../world/compounds';
 import { newSample } from '../world/terrain';
 import type { World } from '../world/world';
@@ -44,6 +44,28 @@ export interface CombatInput {
   missileHeld?: boolean;
   /** The sight line: from the camera through the reticle (unit direction). */
   ray: { ox: number; oy: number; oz: number; dx: number; dy: number; dz: number } | null;
+}
+
+/** Another pilot's aircraft as this game sees it (where it is drawn), for aiming and hits. */
+export interface PilotTarget {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  /** Radius of the sphere shots must hit. */
+  radius: number;
+  alive: boolean;
+}
+
+/** A hit this game scored on another pilot, to be sent to them. */
+export interface PvpHit {
+  id: number;
+  amount: number;
+  crit: number;
+  missile: boolean;
 }
 
 export interface CombatHost {
@@ -127,6 +149,7 @@ export interface Bullet {
 export type MissileTarget =
   | { kind: 'player' }
   | { kind: 'flare'; flare: Flare }
+  | { kind: 'pilot'; id: number }
   | { kind: 'point'; x: number; y: number; z: number; part: PartState | null }
   | { kind: 'none' };
 
@@ -151,6 +174,8 @@ export interface Missile {
   alive: boolean;
   /** Launcher, so a SAM site waits for its last shot. */
   source: PartState | null;
+  /** Combat time a pilot's flare was last weighed against this missile. */
+  decoyAt?: number;
 }
 
 export interface Flare {
@@ -162,6 +187,8 @@ export interface Flare {
   vz: number;
   age: number;
   life: number;
+  /** Dropped by another pilot: it can lure missiles chasing them, never the SAMs chasing you. */
+  remote?: boolean;
 }
 
 export type CombatEvent =
@@ -174,7 +201,7 @@ export type CombatEvent =
   | { type: 'partDestroyed'; x: number; y: number; z: number; size: number; part: PartState; compound: CompoundState; remote?: boolean }
   | { type: 'compoundDestroyed'; compound: CompoundState; remote?: boolean }
   | { type: 'compoundRespawned'; compound: CompoundState }
-  | { type: 'missileLaunch'; enemy: boolean; x: number; y: number; z: number; remote?: boolean }
+  | { type: 'missileLaunch'; enemy: boolean; x: number; y: number; z: number; remote?: boolean; at?: number }
   | { type: 'flare'; x: number; y: number; z: number; remote?: boolean }
   | { type: 'playerHit'; amount: number; fromX: number; fromZ: number; missile: boolean }
   | { type: 'nearMiss' }
@@ -203,6 +230,8 @@ export interface AimState {
 }
 
 export interface LockState {
+  /** Another pilot being locked (takes priority over compound parts). */
+  pilot: PilotTarget | null;
   part: PartState | null;
   compound: CompoundState | null;
   progress: number;
@@ -226,7 +255,7 @@ export class Combat {
   readonly flares: Flare[] = [];
   events: CombatEvent[] = [];
   readonly aim: AimState = { x: 0, y: 0, z: 0, dist: 0, part: null, compound: null };
-  readonly lock: LockState = { part: null, compound: null, progress: 0, locked: false };
+  readonly lock: LockState = { pilot: null, part: null, compound: null, progress: 0, locked: false };
 
   loadout: Loadout = LOADOUTS.medium;
   gunAmmo = 0;
@@ -240,6 +269,12 @@ export class Combat {
   incoming = 0;
   /** World bearings (atan2 of x, z offsets) of compounds shooting at the aircraft. */
   threats: number[] = [];
+  /** Other pilots' aircraft, refreshed every frame by multiplayer. */
+  pilots: PilotTarget[] = [];
+  /** Hits scored on other pilots since multiplayer last collected them. */
+  pvpHits: PvpHit[] = [];
+  /** Missiles other pilots have fired at this aircraft (their games fly them). */
+  extraIncoming = 0;
   /** Start position: no compounds near it. */
   home = { x: 0, z: 0 };
 
@@ -285,6 +320,7 @@ export class Combat {
     this.events.length = 0;
     this.flareQueue = 0;
     this.gunTimer = this.missileTimer = this.flareCool = 0;
+    this.lock.pilot = null;
     this.lock.part = null;
     this.lock.compound = null;
     this.lock.progress = 0;
@@ -379,7 +415,7 @@ export class Combat {
     this.updateBullets(dt, p);
     this.updateMissiles(dt, p);
     this.updatePending(dt);
-    this.incoming = 0;
+    this.incoming = this.extraIncoming;
     for (const m of this.missiles) if (m.enemy && m.target.kind === 'player') this.incoming++;
   }
 
@@ -631,7 +667,15 @@ export class Combat {
       prevT = t;
     }
     const hit = this.segmentPart(r.ox, r.oy, r.oz, r.ox + r.dx * hitT, r.oy + r.dy * hitT, r.oz + r.dz * hitT);
-    const t = hit ? hit.t * hitT : hitT;
+    let t = hit ? hit.t * hitT : hitT;
+    // Another aircraft on the sight line is what the guns range on, not the ground behind it.
+    for (const q of this.pilots) {
+      if (!q.alive) continue;
+      const along = (q.x - r.ox) * r.dx + (q.y - r.oy) * r.dy + (q.z - r.oz) * r.dz;
+      if (along <= 0 || along >= t) continue;
+      const off = Math.hypot(r.ox + r.dx * along - q.x, r.oy + r.dy * along - q.y, r.oz + r.dz * along - q.z);
+      if (off < q.radius * 2) t = along;
+    }
     const a = this.aim;
     a.x = r.ox + r.dx * t;
     a.y = r.oy + r.dy * t;
@@ -650,6 +694,7 @@ export class Combat {
   private updateLock(dt: number, p: PlayerState, input: CombatInput): void {
     const m = this.loadout.missile, L = this.lock;
     if (!m || !input.ray || this.missilesLeft <= 0 || !p.alive) {
+      L.pilot = null;
       L.part = null;
       L.compound = null;
       L.progress = 0;
@@ -658,6 +703,50 @@ export class Combat {
     }
     const r = input.ray;
     const cone = Math.cos((m.lockCone * Math.PI) / 180);
+    // Another pilot inside the seeker's cone comes first: whoever sits closest to the sight line.
+    let pilot: PilotTarget | null = null, pilotScore = cone;
+    for (const q of this.pilots) {
+      if (!q.alive) continue;
+      const dx = q.x - r.ox, dy = q.y - r.oy, dz = q.z - r.oz;
+      const d = Math.hypot(dx, dy, dz);
+      if (d < 5 || d > m.lockRange) continue;
+      const dot = (dx * r.dx + dy * r.dy + dz * r.dz) / d + (L.pilot?.id === q.id ? 0.004 : 0);
+      if (dot > pilotScore) {
+        pilotScore = dot;
+        pilot = q;
+      }
+    }
+    if (pilot) {
+      if (L.pilot?.id !== pilot.id) {
+        L.progress = 0;
+        L.locked = false;
+        this.lockCheck = 0;
+      }
+      L.pilot = pilot;
+      L.part = null;
+      L.compound = null;
+      this.lockCheck -= dt;
+      if (this.lockCheck <= 0) {
+        this.lockCheck = 0.25;
+        this.lockVisible = this.lineOfSight(p.x, p.y - 1, p.z, pilot.x, pilot.y, pilot.z);
+      }
+      if (!this.lockVisible) {
+        L.progress = Math.max(0, L.progress - dt * 2);
+        L.locked = false;
+        return;
+      }
+      L.progress = Math.min(1, L.progress + dt / m.lockTime);
+      if (L.progress >= 1 && !L.locked) {
+        L.locked = true;
+        this.events.push({ type: 'locked' });
+      }
+      return;
+    }
+    if (L.pilot) {
+      L.pilot = null;
+      L.progress = 0;
+      L.locked = false;
+    }
     let best: PartState | null = this.aim.part, bestC: CompoundState | null = this.aim.compound;
     if (best && Math.hypot(best.cx - p.x, best.cy - p.y, best.cz - p.z) > m.lockRange) best = null;
     if (!best) {
@@ -815,9 +904,11 @@ export class Combat {
     const o = this.rotate(p, rail[0], rail[1], rail[2], this.v);
     const f = this.rotate(p, 0, 0, -1, this.u);
     const L = this.lock;
-    const target: MissileTarget = L.locked && L.part
-      ? { kind: 'point', x: L.part.cx, y: L.part.cy, z: L.part.cz, part: L.part }
-      : { kind: 'point', x: this.aim.x, y: this.aim.y, z: this.aim.z, part: null };
+    const target: MissileTarget = L.locked && L.pilot
+      ? { kind: 'pilot', id: L.pilot.id }
+      : L.locked && L.part
+        ? { kind: 'point', x: L.part.cx, y: L.part.cy, z: L.part.cz, part: L.part }
+        : { kind: 'point', x: this.aim.x, y: this.aim.y, z: this.aim.z, part: null };
     const fl = Math.hypot(f[0], f[1], f[2]);
     const x = p.x + o[0], y = p.y + o[1], z = p.z + o[2];
     this.missiles.push({
@@ -826,7 +917,7 @@ export class Combat {
       vx: p.vx, vy: p.vy - 2.5, vz: p.vz,
       age: 0, delay: 0.2, target, minDist: Infinity, alive: true, source: null,
     });
-    this.events.push({ type: 'missileLaunch', enemy: false, x, y, z });
+    this.events.push({ type: 'missileLaunch', enemy: false, x, y, z, at: target.kind === 'pilot' ? target.id : undefined });
     // The next missile has to settle its lock again.
     if (L.locked) {
       L.progress = 0.35;
@@ -978,7 +1069,7 @@ export class Combat {
       vx: 0, vy: 0, vz: 0, age: 0, delay: 0, target: { kind: 'player' }, minDist: Infinity, alive: true, source: q,
     };
     // Flares already burning may take it straight away.
-    const fresh = this.flares.filter((f) => f.age < 1.6);
+    const fresh = this.flares.filter((f) => f.age < 1.6 && !f.remote);
     if (fresh.length && this.rand() < 0.5) m.target = { kind: 'flare', flare: fresh[fresh.length - 1] };
     this.missiles.push(m);
     this.events.push({ type: 'missileLaunch', enemy: true, x: q.mx, y: q.my, z: q.mz });
@@ -999,8 +1090,13 @@ export class Combat {
       b.life -= dt;
       let gone = false;
       if (b.owner === Owner.Player) {
-        const hit = this.segmentPart(ax, ay, az, b.x, b.y, b.z);
-        if (hit) {
+        const pilot = this.pilotOnSegment(ax, ay, az, b.x, b.y, b.z, 0);
+        const hit = pilot ? null : this.segmentPart(ax, ay, az, b.x, b.y, b.z);
+        if (pilot) {
+          this.hitPilot(pilot, b.damage * PVP.gunScale, PVP.gunCrit, false);
+          this.events.push({ type: 'impact', x: b.x, y: b.y, z: b.z, water: false, hit: true, player: true });
+          gone = true;
+        } else if (hit) {
           const t = hit.t;
           const hx = ax + (b.x - ax) * t, hy = ay + (b.y - ay) * t, hz = az + (b.z - az) * t;
           this.damagePart(hit.c, hit.q, b.damage, true);
@@ -1040,6 +1136,34 @@ export class Combat {
       if (!gone) list[n++] = b;
     }
     list.length = n;
+  }
+
+  /** The first live pilot whose sphere (grown by `pad`) the segment passes through. */
+  private pilotOnSegment(ax: number, ay: number, az: number, bx: number, by: number, bz: number, pad: number): PilotTarget | null {
+    for (const q of this.pilots) {
+      if (q.alive && segPointDist(ax, ay, az, bx, by, bz, q.x, q.y, q.z) < q.radius + pad) return q;
+    }
+    return null;
+  }
+
+  private hitPilot(q: PilotTarget, amount: number, crit: number, missile: boolean): void {
+    this.pvpHits.push({ id: q.id, amount, crit, missile });
+    this.events.push({ type: 'hitConfirm', kill: false });
+  }
+
+  /**
+   * A flare another pilot dropped: it burns here too, and may pull away a
+   * missile this aircraft fired at them.
+   */
+  remoteFlare(from: number, x: number, y: number, z: number): void {
+    const f: Flare = { x, y, z, vx: 0, vy: -3, vz: 0, age: 0, life: 4, remote: true };
+    this.flares.push(f);
+    for (const m of this.missiles) {
+      if (m.enemy || m.target.kind !== 'pilot' || m.target.id !== from) continue;
+      if (m.decoyAt !== undefined && this.time - m.decoyAt < 0.7) continue;
+      m.decoyAt = this.time;
+      if (this.rand() < PVP.decoy) m.target = { kind: 'flare', flare: f };
+    }
   }
 
   private hitPlayer(amount: number, reason: string, crit: number, fromX: number, fromZ: number, missile: boolean): void {
@@ -1082,6 +1206,11 @@ export class Combat {
         tx = f.x; ty = f.y; tz = f.z; tvx = f.vx; tvy = f.vy; tvz = f.vz;
       } else if (t.kind === 'point') {
         tx = t.x; ty = t.y; tz = t.z;
+      } else if (t.kind === 'pilot') {
+        const q = this.pilots.find((o) => o.id === t.id && o.alive);
+        if (q) {
+          tx = q.x; ty = q.y; tz = q.z; tvx = q.vx; tvy = q.vy; tvz = q.vz;
+        } else has = false;
       } else has = false;
       if (has) {
         const rx = tx - m.x, ry = ty - m.y, rz = tz - m.z;
@@ -1128,6 +1257,29 @@ export class Combat {
         }
       }
     } else {
+      // Another pilot: the one it chases on a proximity fuse, anyone else on contact.
+      const t0 = m.target;
+      const tp = t0.kind === 'pilot' ? this.pilots.find((o) => o.id === t0.id && o.alive) : undefined;
+      if (tp) {
+        const d = segPointDist(ax, ay, az, m.x, m.y, m.z, tp.x, tp.y, tp.z);
+        if (d < PVP.fuse || (m.minDist < PVP.fuse * 2.5 && d > m.minDist + 2)) {
+          const k = Math.max(0, 1 - Math.max(0, Math.min(d, m.minDist) - tp.radius) / (PVP.fuse * 2));
+          if (k > 0) this.hitPilot(tp, PVP.missileDamage * (0.45 + 0.55 * k), PVP.missileCrit * k, true);
+          this.detonate(m, 1.2, true);
+          return;
+        }
+        m.minDist = Math.min(m.minDist, d);
+      }
+      const other = this.pilotOnSegment(ax, ay, az, m.x, m.y, m.z, 1);
+      if (other) {
+        this.hitPilot(other, PVP.missileDamage, PVP.missileCrit, true);
+        this.detonate(m, 1.2, true);
+        return;
+      }
+      if (t0.kind === 'flare' && Math.hypot(t0.flare.x - m.x, t0.flare.y - m.y, t0.flare.z - m.z) < 7) {
+        this.detonate(m, 0.8, true);
+        return;
+      }
       const hit = this.segmentPart(ax, ay, az, m.x, m.y, m.z);
       if (hit) {
         m.x = ax + (m.x - ax) * hit.t;

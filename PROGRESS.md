@@ -209,6 +209,25 @@ Verified:
 | Two browsers (`node tests/e2e/multiplayer.mjs`) | 14/14: each sees the other at the right place (0.1 m off at 40 m), name tag, wreck shared, compound falls live for the other, credited only to the pilot who did it, late joiner sees the ruin, leaving and going offline, no console errors |
 | Unit tests | 135 pass, including smoothing, message validation, and wrecks from other pilots |
 
+## Pilot against pilot
+
+- Shooter decides: bullets and missiles are tested against where the shooter's game draws
+  the other aircraft; hits are summed and sent every 0.1 s (`hit`); the target's game
+  applies them, scaled by its own aircraft's fragility, and on going down sends `kill` with
+  the last pilot to hit it within 15 s. Tuning is in `PVP` in `src/data/weapons.ts`.
+- The seeker prefers a pilot in its cone over compound parts; the launch names the target
+  (`launch.at`) so their game sounds the missile warning; their flares, relayed, can decoy it.
+- The gunsight ranges on an aircraft on the sight line, so the turret's drop compensation
+  matches the target, not the ground behind it.
+- Mid-air collisions are checked by each game for its own aircraft (rotor discs meeting, or a
+  knock faster than 6 m/s). Two aircraft on the ground only nudge apart; 5 s spawn grace.
+- Markers over pilots within 3 km (`PVP.markerRange`).
+
+Verified: 5 new unit tests (gun hits, lock and missile kill, launch names the target,
+flare decoy, no hits on a wreck); the two-browser test adds 9 checks (marker at 60 m and
+2.5 km, none at 4 km, hit damages the target, lock warning, shot down by name, "You shot
+down Bravo", wreck not hittable, mid-air collision).
+
 ## Sweep (bugs, logic, security)
 
 | Found | Fix |
@@ -294,7 +313,8 @@ package, and the relay address is fixed at build time.
 - Cloud edges show some fine grain at grazing angles (a short ray march without temporal
   accumulation).
 - Rain and snow do not yet stop under bridges or roofs.
-- Multiplayer: other aircraft are not solid and cannot be shot; each pilot's compounds
-  shoot only at that pilot; other aircraft make no engine sound.
+- Multiplayer: each pilot's compounds shoot only at that pilot; other aircraft make no
+  engine sound. PvP hits are decided by the shooter's game, so a modified client could
+  cheat; fine among friends, not for strangers.
 - The relay is not deployed yet: it needs a Cloudflare account (`npx wrangler login`), then
   `VITE_RELAY_URL` set in Vercel. Until then the menu says multiplayer needs a relay.

@@ -232,3 +232,81 @@ describe('wrecks from other pilots and rebuilding', () => {
     expect(WRECK_MEMORY).toBe(COMPOUNDS.respawnTime);
   });
 });
+
+describe('pilot against pilot', () => {
+  // Well away from the compound so only the other pilot is in play.
+  function duel() {
+    const { combat } = setup(900, 120);
+    const p = player(9000, 300);
+    const other = { id: 7, x: p.x, y: p.y + 10, z: p.z - 400, vx: 0, vy: 0, vz: 0, radius: 3.5, alive: true };
+    combat.pilots = [other];
+    const ray = () => rayTo(p, other.x, other.y + 3, other.z);
+    return { combat, p, other, ray };
+  }
+
+  it('gunfire hits another pilot and is reported for them, not applied here', () => {
+    const { combat, p, other, ray } = duel();
+    const hits: number[] = [];
+    run(combat, p, 1.5, () => ({ gun: true, missile: false, flares: false, ray: ray() }), () => {
+      for (const h of combat.pvpHits) hits.push(h.amount);
+      combat.pvpHits.length = 0;
+    });
+    expect(hits.length).toBeGreaterThan(5);
+    expect(hits.every((a) => a > 0 && a < 0.05)).toBe(true);
+    expect(other.alive).toBe(true);
+  });
+
+  it('locks on to another pilot and a missile finds them', () => {
+    const { combat, p, ray } = duel();
+    let fired = false;
+    const missileHits: number[] = [];
+    run(combat, p, 8, () => {
+      const fire = combat.lock.locked && !fired;
+      if (fire) fired = true;
+      return { gun: false, missile: fire, flares: false, ray: ray() };
+    }, () => {
+      for (const h of combat.pvpHits) if (h.missile) missileHits.push(h.amount);
+      combat.pvpHits.length = 0;
+    });
+    expect(fired).toBe(true);
+    expect(missileHits.length).toBe(1);
+    expect(missileHits[0]).toBeGreaterThan(0.25);
+  });
+
+  it('the launch names the pilot it is locked on to, so they get a warning', () => {
+    const { combat, p, ray } = duel();
+    const launches = run(combat, p, 4, () => ({ gun: false, missile: combat.lock.locked, flares: false, ray: ray() }))
+      .filter((e) => e.type === 'missileLaunch');
+    expect(launches.length).toBeGreaterThan(0);
+    expect(launches[0].type === 'missileLaunch' && launches[0].at).toBe(7);
+  });
+
+  it("the target's flares can pull the missile away", () => {
+    const { combat, p, other, ray } = duel();
+    // Far enough that the missile is still on its way when the flares come.
+    other.z = p.z - 2500;
+    for (let k = 0; k < 600 && combat.missiles.length === 0; k++) {
+      run(combat, p, 1 / 60, () => ({ gun: false, missile: combat.lock.locked, flares: false, ray: ray() }));
+    }
+    expect(combat.missiles.length).toBe(1);
+    // Their flares arrive over a few seconds while the missile is in the air.
+    let decoyed = false;
+    for (let k = 0; k < 6 && !decoyed; k++) {
+      combat.remoteFlare(other.id, other.x + 15, other.y - 5, other.z);
+      run(combat, p, 0.75, () => ({ gun: false, missile: false, flares: false, ray: ray() }));
+      decoyed = combat.missiles.some((m) => m.target.kind === 'flare');
+    }
+    expect(decoyed).toBe(true);
+  });
+
+  it('a pilot already shot down is not hit again', () => {
+    const { combat, p, other, ray } = duel();
+    other.alive = false;
+    let n = 0;
+    run(combat, p, 1, () => ({ gun: true, missile: false, flares: false, ray: ray() }), () => {
+      n += combat.pvpHits.length;
+      combat.pvpHits.length = 0;
+    });
+    expect(n).toBe(0);
+  });
+});
