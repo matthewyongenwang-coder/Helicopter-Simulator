@@ -1236,3 +1236,50 @@ kbd {
     display: none;
   }
 }
+
+/* Other pilots: a blue ring and their callsign, to read as "friend" against the red compounds. */
+.marker.pilot b {
+  transform: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+}
+.marker.pilot {
+  color: #c9efff;
+  white-space: nowrap;
+}
+.marker.pilot.dead {
+  opacity: 0.55;
+}
+.marker.pilot.dead b {
+  border-color: var(--dim);
+}
+.net-status {
+  margin: 2px 0 8px;
+  font-size: 0.75rem;
+  color: var(--dim);
+}
+.net-status.on {
+  color: var(--ok);
+}
+.net-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.net-row {
+  margin: 0 4px;
+}
+.seed.callsign input {
+  font-family: inherit;
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+.seed.callsign {
+  margin-bottom: 4px;
+}
+.net-status {
+  margin-left: 4px;
+  margin-right: 4px;
+}

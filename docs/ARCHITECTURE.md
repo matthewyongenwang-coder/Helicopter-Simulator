@@ -12,10 +12,13 @@ src/world/    World generation. Pure functions of (seed, x, z). Runs unchanged o
 src/render/   Three.js: terrain streaming, props, water, sky, aircraft models, cameras.
 src/ui/       DOM/canvas overlay: spawn menu, HUD, minimap, controls overlay.
 src/audio/    Web Audio synthesis.
-src/game/     Orchestration: main loop, input, settings, spawn/respawn.
+src/net/      Multiplayer: wire format, relay client, pose smoothing. No DOM
+              or Three.js; shared with the relay.
+src/game/     Orchestration: main loop, input, settings, spawn/respawn, multiplayer.
+relay/        Cloudflare Worker + Durable Object, one per room (world seed).
 ```
 
-Dependencies only point downward in that list (`game → render/ui/audio → world/sim → data`).
+Dependencies only point downward in that list (`game → render/ui/audio/net → world/sim → data`).
 `sim` talks to the world through one small interface (`Environment`): surface height
 and normal, wind, air density, obstacle collision. Tests plug in a flat environment.
 
@@ -96,3 +99,23 @@ One seed drives everything. All generation is a deterministic function of positi
 - `npm test`: Vitest physics and world tests (headless, scripted inputs).
 - `npm run e2e`: Playwright loads the built game, checks console errors and frame
   rate, drives a flight, and saves screenshots.
+
+## Multiplayer (`src/net`, `relay/`)
+
+- A room is a world seed. Every pilot flies their own aircraft with the full flight model
+  and runs their own compounds, which shoot only at them. Only poses and wrecks are shared.
+- Each pilot sends a pose (position, rotation, velocity, rotor speed, flags) 12 times a
+  second as short-key JSON. Others draw it 180 ms in the past, on a cubic through the two
+  updates either side using their velocities, so motion stays smooth through jitter. A jump
+  of more than 250 m (a respawn) snaps instead of sweeping.
+- Wrecks travel as events (`part`, `cmp`). The relay keeps the set in Durable Object storage
+  so late joiners start with them (with each fallen compound's age, so it rebuilds on the same
+  schedule everywhere), forgets a compound once it has rebuilt, and forgets everything when
+  the room empties. A part wrecked by
+  someone else blows up locally but sets off no secondary blasts: the wrecking pilot's world
+  sends its own chain. Wrecks for compounds not yet loaded wait and apply silently on load.
+- Explosions, missile launches, flares and gunfire from others are injected into the local
+  combat event stream marked `remote`, so effects and sounds play and nothing is sent back.
+- The relay is a dumb, validating fan-out: stamps the sender id, rebuilds poses field by
+  field, rate-limits per socket and caps stored wrecks. It uses the WebSocket hibernation
+  API, so an idle room costs nothing.

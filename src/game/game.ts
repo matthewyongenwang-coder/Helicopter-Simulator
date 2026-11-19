@@ -124,6 +124,10 @@ export class Game {
   onFrame: ((dt: number) => void) | null = null;
   onAction: ((action: Action) => void) | null = null;
   onSpawn: (() => void) | null = null;
+  /** Called each frame after the origin moves and before combat effects are drawn (multiplayer). */
+  onNet: ((dt: number) => void) | null = null;
+  /** Events from other pilots' worlds, shown with this frame's combat effects. */
+  readonly injected: CombatEvent[] = [];
 
   private last = 0;
   private raf = 0;
@@ -171,7 +175,7 @@ export class Game {
     this.supplyView = new SupplyView(this.engine, this.supply, (x, z) => Math.max(0, this.world.height(x, z)));
     this.weather = new WeatherSystem(opts.seed, opts.weather ?? 'auto', opts.hour ?? -1);
     this.setupLighting();
-    this.aircraft = AIRCRAFT[opts.aircraft ?? 'medium'] ?? AIRCRAFT.medium;
+    this.aircraft = opts.aircraft && Object.hasOwn(AIRCRAFT, opts.aircraft) ? AIRCRAFT[opts.aircraft] : AIRCRAFT.medium;
     this.lastPad = this.findSpawn();
     this.combat.home = { x: this.lastPad.x, z: this.lastPad.z };
     this.setSupplyHome(this.lastPad);
@@ -314,6 +318,8 @@ export class Game {
     e.toScene(this.renderPos.x, this.renderPos.y, this.renderPos.z, m.root.position);
     m.root.quaternion.set(this.renderQ.x, this.renderQ.y, this.renderQ.z, this.renderQ.w);
     this.animateModel(dt);
+    // Multiplayer: other aircraft are posed once the origin for this frame is set.
+    this.onNet?.(dt);
     this.rig.update(dt, this.renderPos, this.renderQ, h.att.heading, this.aircraft.rotor.diameter / 2, m.eye, live ? h.tel.vibration : 0, e.timeUniform.value);
     const cockpit = this.rig.mode === 'cockpit';
     m.shell.visible = !cockpit;
@@ -451,6 +457,10 @@ export class Game {
     if (live) c.update(dt, p, inp, true);
     else if (this.mode === 'menu' && dt > 0) c.update(dt, p, inp, false);
     this.combatEvents = c.takeEvents();
+    if (this.injected.length) {
+      this.combatEvents.push(...this.injected);
+      this.injected.length = 0;
+    }
     this.supplyEvents = this.supply.takeEvents();
     this.supplyView.update(this.paused ? 0 : dt, w.x, w.z);
     this.combatView.update(this.paused ? 0 : dt, this.combatEvents, w.x, w.y, w.z);

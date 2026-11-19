@@ -102,7 +102,7 @@ export class WeatherSystem {
 
   constructor(seed: number, mode = 'auto', hour = -1) {
     this.r = rng(seed ^ 0x5eed);
-    this.mode = mode in WEATHER ? mode : 'auto';
+    this.mode = Object.hasOwn(WEATHER, mode) ? mode : 'auto';
     this.hour = hour >= 0 ? hour : DAY_CYCLE.defaultHour;
     this.target = this.mode === 'auto' ? 'fair' : this.mode;
     this.previous = this.target;
@@ -153,7 +153,7 @@ export class WeatherSystem {
 
   /** Choose a preset (or 'auto'). `now` skips the blend. */
   setMode(mode: string, now = true): void {
-    this.mode = mode in WEATHER ? mode : 'auto';
+    this.mode = Object.hasOwn(WEATHER, mode) ? mode : 'auto';
     if (this.mode !== 'auto') this.goTo(this.mode, now);
   }
 

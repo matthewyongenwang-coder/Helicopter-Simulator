@@ -22,12 +22,15 @@ export class WorkerPool {
   private idle: Worker[] = [];
   private queue: Job[] = [];
   private running = new Map<number, Job>();
+  /** Which job each busy worker is on. */
+  private busy = new Map<Worker, number>();
   private nextId = 1;
 
   constructor(seed: number, count: number) {
     for (let i = 0; i < count; i++) {
       const w = new Worker(new URL('./chunkWorker.ts', import.meta.url), { type: 'module' });
       w.onmessage = (e: MessageEvent<WorkerResponse>) => this.onResult(w, e.data);
+      w.onerror = (e) => this.onCrash(w, e);
       w.postMessage({ type: 'init', seed } satisfies WorkerRequest);
       this.workers.push(w);
       this.idle.push(w);
@@ -73,6 +76,7 @@ export class WorkerPool {
       const job = this.queue.splice(best, 1)[0];
       const w = this.idle.pop()!;
       this.running.set(job.id, job);
+      this.busy.set(w, job.id);
       w.postMessage(job.request);
     }
   }
@@ -80,8 +84,21 @@ export class WorkerPool {
   private onResult(w: Worker, res: WorkerResponse): void {
     const job = this.running.get(res.id);
     this.running.delete(res.id);
-    this.idle.push(w);
-    if (job && !job.cancelled) job.done(res);
+    this.busy.delete(w);
+    if (!this.idle.includes(w)) this.idle.push(w);
+    if (res.type === 'error') console.error(`World generation failed (${job?.request.type ?? 'job'} ${res.id}): ${res.message}`);
+    else if (job && !job.cancelled) job.done(res);
+    this.pump();
+  }
+
+  /** The worker itself failed (a script error outside a job): free whatever it was doing. */
+  private onCrash(w: Worker, e: ErrorEvent): void {
+    e.preventDefault();
+    console.error(`World worker error: ${e.message}`);
+    const id = this.busy.get(w);
+    if (id !== undefined) this.running.delete(id);
+    this.busy.delete(w);
+    if (!this.idle.includes(w)) this.idle.push(w);
     this.pump();
   }
 
@@ -91,5 +108,6 @@ export class WorkerPool {
     this.idle.length = 0;
     this.queue.length = 0;
     this.running.clear();
+    this.busy.clear();
   }
 }

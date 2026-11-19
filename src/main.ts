@@ -2,7 +2,7 @@ import { FlightAudio } from './audio/audio';
 import { AIRCRAFT } from './data/aircraft';
 import type { Action } from './data/controls';
 import type { QualityName } from './data/graphics';
-import { DAY_CYCLE } from './data/weather';
+import { DAY_CYCLE, WEATHER } from './data/weather';
 import * as THREE from 'three';
 import { Owner } from './game/combat';
 import { AIM_NDC_Y, Game, type SpawnLoad, type SpawnPoint } from './game/game';
@@ -14,6 +14,10 @@ import { ControlsOverlay } from './ui/overlays';
 import './ui/styles.css';
 import { randomSeed, seedFromString, seedToString } from './world/rng';
 import type { Helipad } from './world/structures';
+import { Multiplayer } from './game/multiplayer';
+import { NetClient } from './net/netClient';
+import { cleanName, ROOM_LIMIT } from './net/protocol';
+import { PilotTags } from './ui/pilotTags';
 
 const params = new URLSearchParams(location.search);
 const settings = loadSettings();
@@ -21,9 +25,13 @@ const seedParam = params.get('seed');
 const seed = seedParam ? seedFromString(seedParam) : randomSeed();
 const q = params.get('quality');
 if (q === 'low' || q === 'medium' || q === 'high') settings.quality = q;
-if (params.get('aircraft') && AIRCRAFT[params.get('aircraft')!]) settings.aircraft = params.get('aircraft')!;
-if (params.get('weather')) settings.weather = params.get('weather')!;
-if (params.get('hour')) settings.hour = Number(params.get('hour'));
+// Own keys only: `?aircraft=constructor` must not pick up an inherited property.
+const acParam = params.get('aircraft');
+if (acParam && Object.hasOwn(AIRCRAFT, acParam)) settings.aircraft = acParam;
+const wxParam = params.get('weather');
+if (wxParam && (wxParam === 'auto' || Object.hasOwn(WEATHER, wxParam))) settings.weather = wxParam;
+const hourParam = Number(params.get('hour') ?? NaN);
+if (params.get('hour') && Number.isFinite(hourParam) && hourParam >= 0 && hourParam <= 24) settings.hour = hourParam;
 const autostart = params.get('autostart') === '1';
 
 const canvas = document.getElementById('view') as HTMLCanvasElement;
@@ -87,6 +95,63 @@ const keyLabels = (): Record<string, string> => {
   return out;
 };
 
+// ---- Multiplayer ----------------------------------------------------------------------
+// The relay address comes from the build (VITE_RELAY_URL), never from the page's URL, so a
+// link cannot point the game at someone else's server. In development it defaults to a
+// relay running on this machine (`npm run dev` in relay/).
+const relayUrl: string = import.meta.env.VITE_RELAY_URL || (import.meta.env.DEV ? `ws://${location.hostname}:8787` : '');
+/** The room is the world seed: everyone on the same seed flies together. */
+let mp: Multiplayer | null = null;
+let netNote = '';
+let netNoteTimer = 0;
+
+function setOnlineParam(on: boolean): void {
+  const p = new URLSearchParams(location.search);
+  if (on) p.set('online', '1');
+  else p.delete('online');
+  const q = p.toString();
+  history.replaceState(null, '', `${location.pathname}${q ? `?${q}` : ''}${location.hash}`);
+}
+
+function goOnline(): void {
+  if (!relayUrl || mp) return;
+  mp = new Multiplayer(game, new NetClient(relayUrl, seedText, cleanName(settings.callsign)));
+  mp.onNotice = (text, kind) => combatHud.say(text, kind);
+  game.onNet = (dt) => mp?.update(dt);
+  setOnlineParam(true);
+}
+
+function goOffline(): void {
+  mp?.dispose();
+  mp = null;
+  game.onNet = null;
+  hud.minimap.pilots = [];
+  pilotTags.hide();
+  setOnlineParam(false);
+}
+
+function copyInvite(): void {
+  const p = new URLSearchParams({ seed: seedText, online: '1' });
+  const url = `${location.origin}${location.pathname}?${p}`;
+  const done = (ok: boolean) => {
+    netNote = ok ? 'Invite link copied' : url;
+    netNoteTimer = ok ? 2.5 : 20;
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(() => done(true), () => done(false));
+  else done(false);
+}
+
+function netStatusText(): string {
+  if (netNoteTimer > 0) return netNote;
+  if (!mp) return 'Pilots on the same world seed fly together.';
+  switch (mp.client.status) {
+    case 'online': return `Room ${seedText} · ${mp.count} pilot${mp.count === 1 ? '' : 's'}`;
+    case 'full': return `Room ${seedText} is full (${ROOM_LIMIT} pilots)`;
+    case 'offline': return 'Offline';
+    default: return `Connecting to room ${seedText}…`;
+  }
+}
+
 // ---- Menu, HUD, controls ------------------------------------------------------------
 let menu: Menu;
 let controls: ControlsOverlay;
@@ -137,6 +202,15 @@ menu = new Menu(menuRoot, {
     audio.setVolume(v);
     saveSettings(settings);
   },
+  netAvailable: !!relayUrl,
+  goOnline: () => goOnline(),
+  goOffline: () => goOffline(),
+  copyInvite: () => copyInvite(),
+  setCallsign: () => {
+    if (!mp) return;
+    goOffline();
+    goOnline();
+  },
 });
 
 const hud = new Hud(ui, game.world, game.pool, (x, z, r) => game.helipads(x, z, r), {
@@ -146,6 +220,8 @@ const hud = new Hud(ui, game.world, game.pool, (x, z, r) => game.helipads(x, z, 
 });
 
 const combatHud = new CombatHud(ui);
+const pilotTags = new PilotTags(ui);
+let netTimer = 0;
 const projV = new THREE.Vector3();
 const camDir = new THREE.Vector3();
 /** World point → screen pixels. */
@@ -171,7 +247,7 @@ function combatAudio(dt: number): void {
       case 'gunFire': audio.gunShot(heavy); break;
       case 'enemyFire': audio.enemyShot(e.dist, e.kind === Owner.Aaa); break;
       case 'missileLaunch': audio.missileLaunch(e.enemy, dist); break;
-      case 'flare': audio.flarePop(); break;
+      case 'flare': if (!e.remote) audio.flarePop(); break;
       case 'explosion': audio.boom(dist, e.size); break;
       case 'partDestroyed': audio.boom(dist, e.size + 0.5); break;
       case 'compoundDestroyed': {
@@ -303,7 +379,18 @@ game.onFrame = (dt) => {
       mapTimer = 0.5;
       hud.minimap.compounds = [...game.combat.compounds.values()].map((c) => ({ x: c.site.x, z: c.site.z, dead: c.destroyed, hot: c.engaged }));
       hud.minimap.supplies = game.supply.sites;
+      hud.minimap.pilots = mp ? [...mp.peers.values()].filter((p) => p.shown).map((p) => ({ x: p.x, z: p.z, heading: p.heading, dead: p.destroyed })) : [];
     }
+    if (mp) {
+      const me = h.pos;
+      pilotTags.update([...mp.peers.values()].filter((p) => p.shown).map((p) => ({ name: p.name, x: p.x, y: p.y, z: p.z, dist: Math.hypot(p.x - me.x, p.y - me.y, p.z - me.z), dead: p.destroyed })), project);
+    }
+  }
+  netNoteTimer -= dt;
+  netTimer -= dt;
+  if (menu.isOpen && netTimer <= 0) {
+    netTimer = 0.25;
+    menu.setNet(netStatusText(), !!mp);
   }
   combatAudio(dt);
   audio.update({
@@ -404,7 +491,8 @@ if (autostart) {
 } else {
   openMenu();
 }
+if (params.get('online') === '1') goOnline();
 game.start();
 
 // Handle for the end-to-end tests and for poking at the game from the console.
-Object.assign(window, { __combatHud: combatHud, __game: game, __menu: menu, __settings: settings, __hud: hud, __audio: audio, __controls: controls });
+Object.assign(window, { __combatHud: combatHud, __game: game, __menu: menu, __settings: settings, __hud: hud, __audio: audio, __controls: controls, __net: () => mp });

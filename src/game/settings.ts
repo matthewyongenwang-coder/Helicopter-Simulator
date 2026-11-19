@@ -1,5 +1,7 @@
 import { DEFAULT_BINDINGS, type Action } from '../data/controls';
+import { AIRCRAFT } from '../data/aircraft';
 import type { QualityName } from '../data/graphics';
+import { WEATHER } from '../data/weather';
 
 export interface Settings {
   quality: QualityName;
@@ -13,6 +15,8 @@ export interface Settings {
   /** Time of day in hours, or −1 to let it run from mid-morning. */
   hour: number;
   weather: string;
+  /** Name other pilots see in multiplayer. */
+  callsign: string;
 }
 
 const KEY = 'helisim.settings.v1';
@@ -27,6 +31,7 @@ export function defaultSettings(): Settings {
     payload: 0.25,
     hour: -1,
     weather: 'auto',
+    callsign: `Pilot ${100 + Math.floor(Math.random() * 900)}`,
   };
 }
 
@@ -37,11 +42,12 @@ export function loadSettings(): Settings {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}');
     if (raw.quality === 'low' || raw.quality === 'medium' || raw.quality === 'high') s.quality = raw.quality;
     if (typeof raw.volume === 'number') s.volume = Math.min(1, Math.max(0, raw.volume));
-    if (typeof raw.aircraft === 'string') s.aircraft = raw.aircraft;
+    if (typeof raw.aircraft === 'string' && Object.hasOwn(AIRCRAFT, raw.aircraft)) s.aircraft = raw.aircraft;
     if (typeof raw.fuel === 'number') s.fuel = Math.min(1, Math.max(0.1, raw.fuel));
     if (typeof raw.payload === 'number') s.payload = Math.min(1, Math.max(0, raw.payload));
-    if (typeof raw.hour === 'number') s.hour = raw.hour;
-    if (typeof raw.weather === 'string') s.weather = raw.weather;
+    if (typeof raw.hour === 'number' && raw.hour >= -1 && raw.hour <= 24) s.hour = raw.hour;
+    if (typeof raw.weather === 'string' && (raw.weather === 'auto' || Object.hasOwn(WEATHER, raw.weather))) s.weather = raw.weather;
+    if (typeof raw.callsign === 'string' && raw.callsign.trim()) s.callsign = raw.callsign.slice(0, 16);
     if (raw.bindings && typeof raw.bindings === 'object') {
       for (const a of Object.keys(s.bindings) as Action[]) {
         const b = raw.bindings[a];

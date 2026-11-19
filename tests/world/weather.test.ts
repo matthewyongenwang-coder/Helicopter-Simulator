@@ -149,3 +149,15 @@ describe('minimap tiles', () => {
     expect(green).toBeGreaterThan(50);
   });
 });
+
+describe('weather from untrusted input', () => {
+  it('ignores names inherited from Object (?weather=toString)', () => {
+    for (const bad of ['toString', 'constructor', '__proto__', 'hasOwnProperty']) {
+      const w = new WeatherSystem(7, bad, -1);
+      expect(w.mode).toBe('auto');
+      expect(Number.isFinite(w.cur.cover)).toBe(true);
+      w.setMode(bad, true);
+      expect(w.mode).toBe('auto');
+    }
+  });
+});

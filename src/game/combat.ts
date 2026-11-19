@@ -166,15 +166,16 @@ export interface Flare {
 
 export type CombatEvent =
   | { type: 'gunFire'; x: number; y: number; z: number }
-  | { type: 'enemyFire'; x: number; y: number; z: number; kind: Owner; dist: number }
+  | { type: 'enemyFire'; x: number; y: number; z: number; kind: Owner; dist: number; remote?: boolean }
   | { type: 'impact'; x: number; y: number; z: number; water: boolean; hit: boolean; player: boolean }
   | { type: 'flak'; x: number; y: number; z: number }
-  | { type: 'explosion'; x: number; y: number; z: number; size: number }
-  | { type: 'partDestroyed'; x: number; y: number; z: number; size: number; part: PartState; compound: CompoundState }
-  | { type: 'compoundDestroyed'; compound: CompoundState }
+  // `remote`: it happened in another pilot's world and was passed on by the relay.
+  | { type: 'explosion'; x: number; y: number; z: number; size: number; remote?: boolean }
+  | { type: 'partDestroyed'; x: number; y: number; z: number; size: number; part: PartState; compound: CompoundState; remote?: boolean }
+  | { type: 'compoundDestroyed'; compound: CompoundState; remote?: boolean }
   | { type: 'compoundRespawned'; compound: CompoundState }
-  | { type: 'missileLaunch'; enemy: boolean; x: number; y: number; z: number }
-  | { type: 'flare'; x: number; y: number; z: number }
+  | { type: 'missileLaunch'; enemy: boolean; x: number; y: number; z: number; remote?: boolean }
+  | { type: 'flare'; x: number; y: number; z: number; remote?: boolean }
   | { type: 'playerHit'; amount: number; fromX: number; fromZ: number; missile: boolean }
   | { type: 'nearMiss' }
   | { type: 'hitConfirm'; kill: boolean }
@@ -243,6 +244,10 @@ export class Combat {
   home = { x: 0, z: 0 };
 
   private sites = new Map<string, CompoundSite | null>();
+  /** Wrecks reported by other pilots for compounds this aircraft has not reached yet. */
+  private remoteParts = new Map<string, Set<number>>();
+  /** Fallen elsewhere: combat-clock time it fell. */
+  private remoteCmps = new Map<string, number>();
   private refreshTimer = 0;
   private gunTimer = 0;
   private muzzle = 0;
@@ -402,7 +407,68 @@ export class Combat {
     const maxHp = parts.reduce((s, q) => s + q.hp, 0);
     const c: CompoundState = { site, parts, hp: maxHp, maxHp, structural: 0, destroyed: false, sees: false, seeTimer: this.rand() * 0.4, dist: Infinity, engaged: false, respawnAt: Infinity };
     this.compounds.set(site.id, c);
+    // Wrecked by another pilot before this aircraft came near: it is already a ruin, no blasts.
+    const dead = this.remoteParts.get(site.id);
+    if (dead) for (const i of dead) if (parts[i]) { parts[i].hp = 0; parts[i].dead = true; }
+    const fell = this.remoteCmps.get(site.id);
+    if (fell !== undefined) {
+      this.wreck(c);
+      c.respawnAt = fell + COMPOUNDS.respawnTime;
+    }
+    else if (dead) {
+      c.hp = Math.max(0, parts.reduce((s, q) => s + Math.max(0, q.hp), 0));
+      if (c.hp <= COMPOUNDS.breakAt * c.maxHp) this.wreck(c);
+    }
+    this.remoteParts.delete(site.id);
+    this.remoteCmps.delete(site.id);
     return c;
+  }
+
+  /** Down with no blasts or events; the rebuild clock starts. */
+  private wreck(c: CompoundState): void {
+    c.destroyed = true;
+    c.engaged = false;
+    c.hp = 0;
+    c.respawnAt = this.time + COMPOUNDS.respawnTime;
+    for (const q of c.parts) {
+      q.dead = true;
+      q.hp = 0;
+    }
+  }
+
+  /**
+   * A part another pilot destroyed. It blows up here too, but sets nothing else
+   * off: their world sends its own chain of secondary blasts.
+   */
+  applyRemotePart(id: string, index: number): void {
+    const c = this.compounds.get(id);
+    if (!c) {
+      let s = this.remoteParts.get(id);
+      if (!s) this.remoteParts.set(id, (s = new Set()));
+      s.add(index);
+      return;
+    }
+    const part = c.parts[index];
+    if (!part || part.dead || c.destroyed) return;
+    part.hp = 0;
+    part.dead = true;
+    const t = part.type;
+    const size = Math.min(2.2, 0.5 + Math.max(t.hx, t.hz, t.hy) / 5);
+    this.events.push({ type: 'partDestroyed', x: part.cx, y: part.cy, z: part.cz, size, part, compound: c, remote: true });
+    this.recount(c);
+  }
+
+  /** A compound another pilot brought down `age` seconds ago; it rebuilds on the same schedule as theirs. */
+  applyRemoteCompound(id: string, age = 0): void {
+    const fell = this.time - Math.max(0, Math.min(COMPOUNDS.respawnTime, age));
+    const c = this.compounds.get(id);
+    if (!c) {
+      this.remoteCmps.set(id, fell);
+      return;
+    }
+    if (c.destroyed) return;
+    this.destroyCompound(c, true);
+    c.respawnAt = fell + COMPOUNDS.respawnTime;
   }
 
   /** Damage one part; it may go up, and take the compound with it. Returns the damage the part could not absorb. */
@@ -432,18 +498,11 @@ export class Combat {
     if (c.hp <= COMPOUNDS.breakAt * c.maxHp) this.destroyCompound(c);
   }
 
-  destroyCompound(c: CompoundState): void {
+  destroyCompound(c: CompoundState, remote = false): void {
     if (c.destroyed) return;
-    c.destroyed = true;
-    c.engaged = false;
-    for (const q of c.parts) {
-      q.dead = true;
-      q.hp = 0;
-    }
-    c.hp = 0;
-    c.respawnAt = this.time + COMPOUNDS.respawnTime;
-    this.destroyedCount++;
-    this.events.push({ type: 'compoundDestroyed', compound: c });
+    this.wreck(c);
+    if (!remote) this.destroyedCount++;
+    this.events.push({ type: 'compoundDestroyed', compound: c, remote });
     for (const m of this.missiles) if (m.source && c.parts.includes(m.source)) m.source = null;
   }
 

@@ -1,0 +1,11 @@
+{
+  // Multiplayer relay for the Helicopter Simulator. Deploy with `npm run deploy` in this folder.
+  "name": "helicopter-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // SQLite-backed Durable Objects are the ones on Cloudflare's free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}

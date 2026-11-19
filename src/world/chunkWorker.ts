@@ -23,7 +23,9 @@ export type TerrainResponse = {
 export type StructureResponse = { type: 'structures'; id: number; cell: StructureCell };
 export type ForestResponse = { type: 'forest'; id: number; cell: ForestCell };
 export type MapResponse = { type: 'map'; id: number; rgba: Uint8ClampedArray };
-export type WorkerResponse = TerrainResponse | StructureResponse | ForestResponse | MapResponse;
+/** A job that threw. The pool logs it and frees the worker; the job's callback is not called. */
+export type ErrorResponse = { type: 'error'; id: number; message: string };
+export type WorkerResponse = TerrainResponse | StructureResponse | ForestResponse | MapResponse | ErrorResponse;
 
 let world: World | null = null;
 const post = (res: WorkerResponse, transfer: Transferable[]) => (self as unknown as DedicatedWorkerGlobalScope).postMessage(res, transfer);
@@ -35,6 +37,15 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     return;
   }
   if (!world) return;
+  try {
+    run(world, m);
+  } catch (err) {
+    // Always answer, or the pool would wait on this worker forever.
+    post({ type: 'error', id: m.id, message: String(err) }, []);
+  }
+};
+
+function run(world: World, m: Exclude<WorkerRequest, { type: 'init' }>): void {
   if (m.type === 'terrain') {
     const d = buildTerrainMesh(world, m.x0, m.z0, m.size, m.cells);
     post({ type: 'terrain', id: m.id, ...d }, [d.positions.buffer, d.normals.buffer, d.colors.buffer]);
@@ -50,4 +61,4 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     const rgba = buildMapTile(world, m.x0, m.z0, m.size, m.px);
     post({ type: 'map', id: m.id, rgba }, [rgba.buffer]);
   }
-};
+}

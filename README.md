@@ -1,6 +1,6 @@
 # Helicopter Simulator
 
-A browser helicopter flight simulator with an infinite, seeded open world. Six aircraft,
+A browser helicopter flight simulator with an infinite, seeded open world. Seven aircraft,
 a 6-DOF flight model running at a fixed 120 Hz, and an autohover system that only ever
 moves the same controls the pilot has. Everything you see and hear is generated: there
 are no downloaded models, textures or audio files.
@@ -136,6 +136,48 @@ is one too. Land inside the ring and stay put: after a second the ground crew pa
 airframe (fully in about 20 s, tail rotor included), fills the tanks and reloads the gun,
 missiles and flares. The card at the top of the screen shows their progress.
 
+## Multiplayer
+
+Pilots on the same world seed fly together. Open the menu, set a callsign under
+**Multiplayer** and press **Play online**; **Copy invite link** gives a link that opens the
+same world, online. You see the others' aircraft, callsigns and minimap arrows, their
+gunfire, missiles, flares and explosions, and any compound part one pilot destroys is
+destroyed for everyone (a pilot who joins later finds the same wrecks). Up to 16 pilots
+share a room. Your own compounds shoot only at you, and other aircraft are not solid and
+cannot be shot.
+
+The game stays a static site. A small relay on Cloudflare (`relay/`, one Durable Object per
+room) passes each pilot's updates to the others and remembers the wrecks; it runs no
+physics, because the world comes from the seed. A pilot sends about 12 updates a second at
+under 2 KB/s, which fits in Cloudflare's free plan.
+
+Try it on one machine:
+
+```bash
+cd relay && npm install && npm run dev
+```
+
+```bash
+npm run dev
+```
+
+Open the game in two windows with `?seed=TEST&online=1`. `node tests/net/relay.mjs` and
+`node tests/e2e/multiplayer.mjs` test it against the local relay.
+
+Put it online:
+
+1. `cd relay`, then `npx wrangler login` (sign in to a free Cloudflare account) and
+   `npm run deploy`. Wrangler prints the relay's address, `https://helicopter-relay.<you>.workers.dev`.
+2. In the Vercel project, add the environment variable
+   `VITE_RELAY_URL=wss://helicopter-relay.<you>.workers.dev` and redeploy.
+3. Optional: in the Cloudflare dashboard, set the relay's `ALLOWED_ORIGINS` variable to the
+   game's address (for example `https://helicopter-simulator.vercel.app`) so other sites
+   cannot use it.
+
+The relay address is fixed when the game is built, never read from the page's URL, so a
+link cannot send players to someone else's server. The relay checks every message, cleans
+callsigns, drops poses past 30 a second and disconnects a pilot who floods it.
+
 ## The world
 
 Every launch gets a random seed, shown at the top left; the same seed always builds the
@@ -162,7 +204,9 @@ src/world/   World generation. Pure functions of (seed, x, z); runs in workers, 
 src/render/  Three.js: engine and floating origin, terrain, props, water, sky, clouds, effects, models, cameras
 src/ui/      Menu, HUD, minimap, controls overlay
 src/audio/   Web Audio synthesis
-src/game/    Orchestration: frame loop, input, settings, weather, spawn and respawn
+src/net/     Multiplayer wire format, relay client, and smoothing of other pilots' aircraft
+src/game/    Orchestration: frame loop, input, settings, weather, spawn and respawn, multiplayer
+relay/       Cloudflare Worker and Durable Object that relays a room's messages
 ```
 
 Dependencies only point down that list. The flight model sees the world through one small

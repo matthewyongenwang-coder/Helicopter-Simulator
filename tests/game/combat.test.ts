@@ -168,3 +168,67 @@ describe('combat', () => {
     expect(empties).toBe(0);
   });
 });
+
+describe('wrecks from other pilots', () => {
+  const idle = (): CombatInput => ({ gun: false, missile: false, flares: false, ray: null });
+
+  it('a part wrecked before this aircraft arrives is already down, with no blast', () => {
+    const { combat, p } = setup(900, 120);
+    combat.applyRemotePart(site.id, 0);
+    const events = run(combat, p, 0.1, idle);
+    const c = combat.compounds.get(site.id)!;
+    expect(c.parts[0].dead).toBe(true);
+    expect(c.parts.slice(1).every((q) => !q.dead)).toBe(true);
+    expect(events.some((e) => e.type === 'partDestroyed')).toBe(false);
+  });
+
+  it('a compound brought down elsewhere arrives as a ruin and is not credited here', () => {
+    const { combat, p } = setup(900, 120);
+    combat.applyRemoteCompound(site.id);
+    const events = run(combat, p, 0.1, idle);
+    expect(combat.compounds.get(site.id)!.destroyed).toBe(true);
+    expect(combat.destroyedCount).toBe(0);
+    expect(events.some((e) => e.type === 'compoundDestroyed')).toBe(false);
+  });
+
+  it('a part wrecked live blows up here, marked remote so it is not sent back', () => {
+    const { combat, p } = setup(900, 120);
+    run(combat, p, 0.1, idle);
+    combat.applyRemotePart(site.id, 1);
+    combat.applyRemotePart(site.id, 1);
+    const events = combat.takeEvents().filter((e) => e.type === 'partDestroyed');
+    expect(events.length).toBe(1);
+    expect(events[0].type === 'partDestroyed' && events[0].remote).toBe(true);
+    expect(combat.compounds.get(site.id)!.parts[1].dead).toBe(true);
+  });
+
+  it('ignores parts that do not exist', () => {
+    const { combat, p } = setup(900, 120);
+    run(combat, p, 0.1, idle);
+    expect(() => combat.applyRemotePart(site.id, 250)).not.toThrow();
+    expect(() => combat.applyRemotePart('nowhere', 3)).not.toThrow();
+    expect(combat.compounds.get(site.id)!.parts.every((q) => !q.dead)).toBe(true);
+  });
+});
+
+describe('wrecks from other pilots and rebuilding', () => {
+  const idle = (): CombatInput => ({ gun: false, missile: false, flares: false, ray: null });
+
+  it('a compound that fell elsewhere 100 s ago rebuilds about 20 s after this aircraft hears of it', () => {
+    const { combat } = setup(900, 120);
+    const far = player(5000, 300);
+    run(combat, far, 0.1, idle);
+    combat.applyRemoteCompound(site.id, 100);
+    run(combat, far, 1.2, idle);
+    const c = combat.compounds.get(site.id)!;
+    expect(c.destroyed).toBe(true);
+    expect(c.respawnAt - combat.time).toBeGreaterThan(17);
+    expect(c.respawnAt - combat.time).toBeLessThan(21);
+  });
+
+  it('the relay forgets wrecks on the same clock the game rebuilds them', async () => {
+    const { WRECK_MEMORY } = await import('../../src/net/protocol');
+    const { COMPOUNDS } = await import('../../src/data/weapons');
+    expect(WRECK_MEMORY).toBe(COMPOUNDS.respawnTime);
+  });
+});

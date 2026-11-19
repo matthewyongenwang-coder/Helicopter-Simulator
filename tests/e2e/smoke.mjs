@@ -51,9 +51,9 @@ try {
   if (args.menu !== '0') {
     await page.waitForSelector('#menu.open');
     const rows = await page.$$eval('#menu [aria-label="Aircraft"] .row', (r) => r.map((n) => n.textContent));
-    check(rows.length === 6, 'menu lists six aircraft', rows.join(' | '));
+    check(rows.length === 7, 'menu lists all seven aircraft', rows.join(' | '));
     const table = await page.$eval('#menu .specs table', (t) => ({ rows: t.querySelectorAll('tbody tr').length, cols: t.querySelectorAll('thead th').length }));
-    check(table.rows >= 12 && table.cols === 7, 'spec table compares all six', `${table.rows} rows x ${table.cols - 1} aircraft`);
+    check(table.rows >= 12 && table.cols === 8, 'spec table compares all seven', `${table.rows} rows x ${table.cols - 1} aircraft`);
     const pads = await page.$$eval('#menu [aria-label="Start location"] .row', (r) => r.map((n) => n.textContent));
     check(pads.length >= 3 && pads.some((p) => p.includes('Free flight')), 'menu offers helipads and free flight', `${pads.length} choices`);
     const seedShown = await page.$eval('#menu .seed input', (i) => i.value);

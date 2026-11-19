@@ -85,6 +85,8 @@ export class Minimap {
   compounds: { x: number; z: number; dead: boolean; hot: boolean }[] = [];
   /** Supply points to mark. */
   supplies: { x: number; z: number }[] = [];
+  /** Other pilots in a multiplayer room: position, heading (rad, clockwise from north) and whether shot down. */
+  pilots: { x: number; z: number; heading: number; dead: boolean }[] = [];
 
   draw(x: number, z: number, heading: number, last: { x: number; z: number } | null, wind: { x: number; z: number }): void {
     this.frame++;
@@ -218,6 +220,26 @@ export class Minimap {
       c.fillStyle = '#ffffff';
       c.fillRect(px - 3.5, py - 1, 7, 2);
       c.fillRect(px - 1, py - 3.5, 2, 7);
+    }
+
+    // Other pilots: blue arrows, pinned to the edge when out of range.
+    for (const k of this.pilots) {
+      const px = Math.max(6, Math.min(S - 6, mx(k.x))), py = Math.max(6, Math.min(S - 6, my(k.z)));
+      c.save();
+      c.translate(px, py);
+      c.rotate(k.heading);
+      c.fillStyle = k.dead ? 'rgba(160,170,180,0.8)' : '#64d2ff';
+      c.strokeStyle = 'rgba(0,0,0,0.75)';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(0, -6.5);
+      c.lineTo(4.5, 5);
+      c.lineTo(0, 2.5);
+      c.lineTo(-4.5, 5);
+      c.closePath();
+      c.stroke();
+      c.fill();
+      c.restore();
     }
 
     // Last helipad (respawn point).

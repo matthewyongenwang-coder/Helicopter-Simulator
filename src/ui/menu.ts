@@ -43,6 +43,15 @@ export interface MenuHost {
   /** Start hour, or −1 for the default morning start. */
   setHour(hour: number): void;
   setVolume(v: number): void;
+  /** A multiplayer relay is configured for this build. */
+  netAvailable: boolean;
+  /** Join the room for this world seed, or leave it. */
+  goOnline(): void;
+  goOffline(): void;
+  /** Copy a link that opens this world, online. */
+  copyInvite(): void;
+  /** The callsign changed (reconnect if online, so others see it). */
+  setCallsign(name: string): void;
 }
 
 const TIMES: [string, number][] = [
@@ -93,9 +102,13 @@ export class Menu {
   private resumeBtn = el('button', { class: 'btn wide', onclick: () => this.host.resume() }, 'Resume flight');
   /** A flight is in progress behind the menu; picking anything else replaces it. */
   private resumable = false;
+  private netStatus = el('p', { class: 'net-status', 'aria-live': 'polite' });
+  private netBtn = el('button', { class: 'btn', onclick: () => (this.netOnline ? this.host.goOffline() : this.host.goOnline()) }, 'Play online');
+  private inviteBtn = el('button', { class: 'btn', onclick: () => this.host.copyInvite() }, 'Copy invite link');
+  private netOnline = false;
 
   constructor(private root: HTMLElement, private host: MenuHost) {
-    this.aircraft = AIRCRAFT[host.settings.aircraft] ? host.settings.aircraft : 'medium';
+    this.aircraft = Object.hasOwn(AIRCRAFT, host.settings.aircraft) ? host.settings.aircraft : 'medium';
     const s = host.settings;
 
     const seedInput = el('input', { value: seedToString(host.seed), spellcheck: false, 'aria-label': 'World seed', maxlength: 24 });
@@ -153,6 +166,8 @@ export class Menu {
         range('Payload', () => s.payload, (v) => (s.payload = v), (v) => `${fmt(this.payloadKg(v))} kg`),
         el('div', { class: 'label section' }, 'World seed'),
         el('div', { class: 'seed' }, seedInput, el('button', { class: 'btn', onclick: () => host.reseed(seedInput.value) }, 'Load'), el('button', { class: 'btn', onclick: () => host.reseed(null) }, 'New')),
+        el('div', { class: 'label section' }, 'Multiplayer'),
+        this.multiplayerSection(),
         el('div', { class: 'label section' }, 'Options'),
         el('div', { class: 'field' }, el('span', {}, 'Weather'), select('Weather', [['auto', 'Changing'], ...WEATHER_ORDER.map((id): [string, string] => [id, WEATHER[id].label])], s.weather, (v) => {
           s.weather = v;
@@ -176,6 +191,44 @@ export class Menu {
     root.append(this.side, this.specs);
     this.renderAircraft();
     this.renderSpecs();
+  }
+
+  private multiplayerSection(): HTMLElement {
+    const host = this.host, s = host.settings;
+    if (!host.netAvailable) {
+      return el('p', { class: 'net-status' }, 'Multiplayer needs a relay server. See README, "Multiplayer".');
+    }
+    const name = el('input', { value: s.callsign, spellcheck: false, 'aria-label': 'Callsign', maxlength: 16 });
+    const commit = () => {
+      const v = name.value.trim().slice(0, 16);
+      if (!v || v === s.callsign) {
+        name.value = s.callsign;
+        return;
+      }
+      s.callsign = v;
+      host.saveSettings();
+      host.setCallsign(v);
+    };
+    name.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') name.blur();
+    });
+    name.addEventListener('change', commit);
+    this.setNet('Pilots on the same world seed fly together.', false);
+    return el('div', {},
+      el('div', { class: 'seed callsign' }, name),
+      this.netStatus,
+      el('div', { class: 'net-row' }, this.netBtn, this.inviteBtn),
+    );
+  }
+
+  /** Connection line under the multiplayer heading, and which button shows. */
+  setNet(text: string, online: boolean): void {
+    if (this.netStatus.textContent !== text) this.netStatus.textContent = text;
+    this.netStatus.classList.toggle('on', online);
+    this.netOnline = online;
+    this.netBtn.textContent = online ? 'Go offline' : 'Play online';
+    this.inviteBtn.style.display = online ? '' : 'none';
   }
 
   /** Payload in kg for a slider position: the fraction of the room left under max takeoff weight. */

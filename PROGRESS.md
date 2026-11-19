@@ -10,6 +10,7 @@
 | 4 | Six aircraft, models, spawn menu | **Done** |
 | 5 | HUD, cameras, audio, weather, day/night, damage, polish | **Done** |
 | 6 | Performance pass, playtest, README | **Done** |
+| 7 | Multiplayer (Cloudflare relay) and a bug and security sweep | **Done**, relay not yet deployed |
 
 ## Milestone 1
 
@@ -185,6 +186,45 @@ Verified:
 | Production build | `npm run build` passes, 205 KB gzipped plus a 29 KB worker |
 | Unit tests | 101 passing |
 
+## Milestone 7: multiplayer
+
+- `relay/`: a Cloudflare Worker with one Durable Object per room. The room is the world
+  seed. It stamps and fans out messages, keeps the wrecks for late joiners, forgets them
+  when the room empties, and uses WebSocket hibernation.
+- `src/net/`: the wire format and validators (shared with the relay), a reconnecting
+  client, and the pose buffer that smooths other aircraft.
+- `src/game/multiplayer.ts`, `src/render/remoteView.ts`, `src/ui/pilotTags.ts`: other
+  pilots' aircraft, callsign tags, minimap arrows, their effects, and shared wrecks.
+- Menu: callsign, Play online / Go offline, Copy invite link. `?online=1` joins on load.
+- Compounds rebuild 120 s after they fall. The relay forgets a fallen compound after the
+  same time (`WRECK_MEMORY`, tested equal to `COMPOUNDS.respawnTime`), sends joiners each
+  wreck's age so it rebuilds for them on the same schedule, and clears a fallen compound's
+  parts so kills on the rebuilt one are shared again.
+
+Verified:
+
+| Check | Result |
+|---|---|
+| Relay (`node tests/net/relay.mjs`, local `wrangler dev`) | 12/12: welcome, join, leave, stamped and cleaned relay, bad poses dropped, wreck kept once, late joiner gets wrecks, empty room resets, rate limit and flood cut-off |
+| Two browsers (`node tests/e2e/multiplayer.mjs`) | 14/14: each sees the other at the right place (0.1 m off at 40 m), name tag, wreck shared, compound falls live for the other, credited only to the pilot who did it, late joiner sees the ruin, leaving and going offline, no console errors |
+| Unit tests | 135 pass, including smoothing, message validation, and wrecks from other pilots |
+
+## Sweep (bugs, logic, security)
+
+| Found | Fix |
+|---|---|
+| `?aircraft=constructor` or `?weather=toString` crashed the game at start (inherited object keys passed the lookups); a peer could do the same to everyone with `"a":"toString"` | Own-key checks (`Object.hasOwn`) for URL parameters, saved settings and network ids; regression test |
+| A world-generation error inside a worker left that worker busy forever, so terrain could stop streaming and the game hang on "Generating world" | The worker always answers (an `error` reply), the pool frees the worker and logs it, and worker crashes are handled too |
+| `?hour=` and saved hours were not range-checked | Only 0 to 24 (or the default) accepted |
+| Relay open to floods and unbounded storage | Per-socket rate limits, disconnect past 400 messages a second, caps on stored wrecks, optional `ALLOWED_ORIGINS` |
+| Hidden tabs piled up incoming poses | Pose backlog capped; wreck events always kept |
+| Peer could force a model rebuild every update by alternating aircraft | At most one swap a second per pilot |
+| No security headers on the Vercel site | `vercel.json`: nosniff, referrer policy, frame options, permissions policy |
+
+Checked and fine: no `innerHTML` or `eval` anywhere (all text goes through `textContent`),
+saved settings are validated field by field, `npm audit` reports no vulnerabilities in either
+package, and the relay address is fixed at build time.
+
 ## Decisions
 
 - **Settlement kinds are capped by peak density**, so only cities reach tower density and
@@ -254,3 +294,7 @@ Verified:
 - Cloud edges show some fine grain at grazing angles (a short ray march without temporal
   accumulation).
 - Rain and snow do not yet stop under bridges or roofs.
+- Multiplayer: other aircraft are not solid and cannot be shot; each pilot's compounds
+  shoot only at that pilot; other aircraft make no engine sound.
+- The relay is not deployed yet: it needs a Cloudflare account (`npx wrangler login`), then
+  `VITE_RELAY_URL` set in Vercel. Until then the menu says multiplayer needs a relay.
