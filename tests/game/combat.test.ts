@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPOUNDS, ENEMY, LOADOUTS } from '../../src/data/weapons';
+import { COMPOUNDS, ENEMY, LOADOUTS, PVP } from '../../src/data/weapons';
 import { Combat, compoundHealth, type CombatEvent, type CombatInput, type PlayerState } from '../../src/game/combat';
 import { compoundsNear, PART_TYPES, type CompoundSite } from '../../src/world/compounds';
 import { rng } from '../../src/world/rng';
@@ -252,8 +252,24 @@ describe('pilot against pilot', () => {
       combat.pvpHits.length = 0;
     });
     expect(hits.length).toBeGreaterThan(5);
-    expect(hits.every((a) => a > 0 && a < 0.05)).toBe(true);
+    expect(hits.every((a) => a > 0 && a <= PVP.maxHit)).toBe(true);
+    // A second and a half on target takes a real bite out of them.
+    expect(hits.reduce((s, a) => s + a, 0)).toBeGreaterThan(0.3);
     expect(other.alive).toBe(true);
+  });
+
+  it('the gun aims anywhere, even straight behind and below', () => {
+    for (const [dx, dy, dz] of [[0, -40, 400], [400, -60, 0], [0, -150, 30]]) {
+      const { combat, p, other } = duel();
+      other.x = p.x + dx; other.y = p.y + dy; other.z = p.z + dz;
+      const ray = () => rayTo(p, other.x, other.y + 3, other.z);
+      let n = 0;
+      run(combat, p, 1.5, () => ({ gun: true, missile: false, flares: false, ray: ray() }), () => {
+        n += combat.pvpHits.length;
+        combat.pvpHits.length = 0;
+      });
+      expect(n).toBeGreaterThan(3);
+    }
   });
 
   it('locks on to another pilot and a missile finds them', () => {
@@ -270,7 +286,9 @@ describe('pilot against pilot', () => {
     });
     expect(fired).toBe(true);
     expect(missileHits.length).toBe(1);
-    expect(missileHits[0]).toBeGreaterThan(0.25);
+    expect(missileHits[0]).toBeGreaterThan(PVP.missileDamage * 0.4);
+    // One missile is not a kill on its own.
+    expect(missileHits[0]).toBeLessThan(0.5);
   });
 
   it('the launch names the pilot it is locked on to, so they get a warning', () => {

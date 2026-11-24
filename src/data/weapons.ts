@@ -21,7 +21,7 @@ export interface GunSpec {
   spread: number;
   /** Barrels fire in turn. */
   muzzles: V3[];
-  /** Turret travel: ± yaw and the pitch range, degrees. Small numbers for fixed guns. */
+  /** Turret travel: ± yaw and the pitch range, degrees. 180 / ±90 is free aim in every direction. */
   yawLimit: number;
   pitchMin: number;
   pitchMax: number;
@@ -80,7 +80,7 @@ export const LOADOUTS: Record<string, Loadout> = {
   scout: {
     gun: {
       name: '12.7 mm pods', rate: 15, ammo: 900, speed: 900, damage: 7, splash: 0, spread: 0.0035,
-      muzzles: [[-1.05, -0.62, -1.3], [1.05, -0.62, -1.3]], yawLimit: 6, pitchMin: -12, pitchMax: 4, tracerEvery: 3,
+      muzzles: [[-1.05, -0.62, -1.3], [1.05, -0.62, -1.3]], yawLimit: 180, pitchMin: -90, pitchMax: 90, tracerEvery: 3,
     },
     missile: hellfire([[-1.42, -0.62, -0.45], [1.42, -0.62, -0.45]]),
     flares: 30,
@@ -91,7 +91,7 @@ export const LOADOUTS: Record<string, Loadout> = {
   medium: {
     gun: {
       name: '20 mm turret', rate: 12, ammo: 750, speed: 1000, damage: 10, splash: 2, spread: 0.0035,
-      muzzles: [[0, -1.24, -5.75]], yawLimit: 110, pitchMin: -60, pitchMax: 15, tracerEvery: 3,
+      muzzles: [[0, -1.24, -5.75]], yawLimit: 180, pitchMin: -90, pitchMax: 90, tracerEvery: 3,
     },
     missile: hellfire([[-2.05, -0.78, -0.55], [2.05, -0.78, -0.55], [-2.42, -0.78, -0.55], [2.42, -0.78, -0.55]]),
     flares: 60,
@@ -102,7 +102,7 @@ export const LOADOUTS: Record<string, Loadout> = {
   attack: {
     gun: {
       name: '30 mm chin turret', rate: 10, ammo: 600, speed: 1050, damage: 16, splash: 3, spread: 0.003,
-      muzzles: [[0, -1.05, -5.2]], yawLimit: 110, pitchMin: -60, pitchMax: 18, tracerEvery: 2,
+      muzzles: [[0, -1.05, -5.2]], yawLimit: 180, pitchMin: -90, pitchMax: 90, tracerEvery: 2,
     },
     missile: hellfire([
       [-1.2, -0.62, -0.75], [1.2, -0.62, -0.75], [-1.52, -0.62, -0.75], [1.52, -0.62, -0.75],
@@ -116,7 +116,7 @@ export const LOADOUTS: Record<string, Loadout> = {
   gunship: {
     gun: {
       name: '30 mm chin turret', rate: 10, ammo: 900, speed: 1050, damage: 16, splash: 3, spread: 0.003,
-      muzzles: [[0, -1.12, -5.6]], yawLimit: 110, pitchMin: -60, pitchMax: 18, tracerEvery: 2,
+      muzzles: [[0, -1.12, -5.6]], yawLimit: 180, pitchMin: -90, pitchMax: 90, tracerEvery: 2,
     },
     // Four pylons, each a pack of six; ripples out faster than the others' single rails.
     missile: { ...hellfire(gunshipRails()), reload: 0.22 },
@@ -175,13 +175,19 @@ export interface EnemyGun {
  * Damage is a fraction of a full airframe.
  */
 export const PVP = {
-  /** Airframe damage per point of a gun's compound damage: a 30 mm round (16) takes about 2.4 %. */
-  gunScale: 0.0015,
+  /**
+   * Airframe damage per point of a gun's compound damage: a 30 mm round (16) takes about 6.4 %,
+   * so a couple of seconds on target brings an aircraft down. Guns are the main PvP weapon.
+   */
+  gunScale: 0.004,
   /** Chance a gun hit takes out the tail rotor. */
-  gunCrit: 0.03,
-  /** A missile bursting right on an aircraft; less the further off it passes. Hits hard. */
-  missileDamage: 0.8,
-  missileCrit: 0.25,
+  gunCrit: 0.05,
+  /**
+   * A missile bursting right on an aircraft; less the further off it passes. It takes a few to
+   * bring a pilot down (three on the Wasp, five or six on the armoured gunships).
+   */
+  missileDamage: 0.35,
+  missileCrit: 0.08,
   /** Proximity fuse radius, m: it has to get close, but when it does it counts. */
   fuse: 6,
   /** Chance a missile chasing a pilot takes a flare they drop (rolled at most every 0.7 s). */
@@ -189,7 +195,7 @@ export const PVP = {
   /** Hits are summed and sent this often, s. */
   hitBatch: 0.1,
   /** The largest single hit message a game accepts. */
-  maxHit: 0.8,
+  maxHit: 0.5,
   /** A hit counts toward a kill for this long, s. */
   killCredit: 15,
   /** Closing speed above which touching another aircraft wrecks you, m/s; any contact with a turning rotor does too. */

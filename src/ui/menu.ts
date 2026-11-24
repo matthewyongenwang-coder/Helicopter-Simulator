@@ -3,6 +3,7 @@ import { armamentText } from '../data/weapons';
 import { GRAPHICS, type QualityName } from '../data/graphics';
 import { WEATHER, WEATHER_ORDER } from '../data/weather';
 import type { Settings } from '../game/settings';
+import { ROOM_LIMIT, type LobbyInfo } from '../net/protocol';
 import { deriveAircraft } from '../sim/derive';
 import { KTS } from '../sim/math';
 import { seedToString } from '../world/rng';
@@ -52,7 +53,16 @@ export interface MenuHost {
   copyInvite(): void;
   /** The callsign changed (reconnect if online, so others see it). */
   setCallsign(name: string): void;
+  /** This world's room code (its seed). */
+  room: string;
+  /** Rooms with pilots in them, from the relay. */
+  listLobbies(): Promise<LobbyInfo[]>;
+  /** Fly in another pilot's room (reloads on its seed, online). */
+  joinRoom(room: string): void;
 }
+
+/** Seconds between lobby list refreshes while the menu is open. */
+const LOBBY_POLL = 5;
 
 const TIMES: [string, number][] = [
   ['Morning', -1],
@@ -106,6 +116,10 @@ export class Menu {
   private netBtn = el('button', { class: 'btn', onclick: () => (this.netOnline ? this.host.goOffline() : this.host.goOnline()) }, 'Play online');
   private inviteBtn = el('button', { class: 'btn', onclick: () => this.host.copyInvite() }, 'Copy invite link');
   private netOnline = false;
+  private lobbyList = el('div', { class: 'lobbies', 'aria-label': 'Open lobbies', 'aria-live': 'polite' });
+  private lobbies: LobbyInfo[] | null = null;
+  private lobbyError = false;
+  private lobbyTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private root: HTMLElement, private host: MenuHost) {
     this.aircraft = Object.hasOwn(AIRCRAFT, host.settings.aircraft) ? host.settings.aircraft : 'medium';
@@ -215,20 +229,75 @@ export class Menu {
     });
     name.addEventListener('change', commit);
     this.setNet('Pilots on the same world seed fly together.', false);
+    this.renderLobbies();
     return el('div', {},
       el('div', { class: 'seed callsign' }, name),
       this.netStatus,
       el('div', { class: 'net-row' }, this.netBtn, this.inviteBtn),
+      el('div', { class: 'label section' }, 'Open lobbies'),
+      this.lobbyList,
     );
   }
 
   /** Connection line under the multiplayer heading, and which button shows. */
   setNet(text: string, online: boolean): void {
+    const wasOnline = this.netOnline;
     if (this.netStatus.textContent !== text) this.netStatus.textContent = text;
     this.netStatus.classList.toggle('on', online);
     this.netOnline = online;
     this.netBtn.textContent = online ? 'Go offline' : 'Play online';
     this.inviteBtn.style.display = online ? '' : 'none';
+    if (online !== wasOnline) this.renderLobbies();
+  }
+
+  /** Fetch the lobby list now, then every few seconds while the menu stays open. */
+  private pollLobbies(): void {
+    if (this.lobbyTimer) clearTimeout(this.lobbyTimer);
+    this.lobbyTimer = null;
+    if (!this.isOpen || !this.host.netAvailable) return;
+    this.host.listLobbies().then(
+      (list) => {
+        this.lobbies = list;
+        this.lobbyError = false;
+      },
+      () => (this.lobbyError = true),
+    ).finally(() => {
+      if (!this.isOpen) return;
+      this.renderLobbies();
+      this.lobbyTimer = setTimeout(() => this.pollLobbies(), LOBBY_POLL * 1000);
+    });
+  }
+
+  private renderLobbies(): void {
+    if (!this.host.netAvailable) return;
+    const here = this.host.room;
+    const note = (text: string) => el('p', { class: 'net-status' }, text);
+    if (!this.lobbies) {
+      this.lobbyList.replaceChildren(note(this.lobbyError ? 'Can\u2019t reach the lobby list.' : 'Looking for pilots\u2026'));
+      return;
+    }
+    // While offline this world's own room is listed like any other; online, it is the one you are in.
+    const rows = this.lobbies.map((l) => {
+      const mine = l.room === here && this.netOnline;
+      const full = l.pilots >= ROOM_LIMIT && !mine;
+      const btn = mine
+        ? el('span', { class: 'lobby-here' }, 'You\u2019re here')
+        : el('button', {
+          class: 'btn small',
+          'aria-label': `Join room ${l.room}`,
+          onclick: () => (l.room === here ? this.host.goOnline() : this.host.joinRoom(l.room)),
+        }, full ? 'Full' : 'Join');
+      if (full) (btn as HTMLButtonElement).disabled = true;
+      return el('div', { class: `lobby${mine ? ' mine' : ''}` },
+        el('div', { class: 'lobby-text' },
+          el('span', { class: 'lobby-room num' }, l.room, el('span', { class: 'lobby-count' }, ` \u00b7 ${l.pilots}/${ROOM_LIMIT}`)),
+          el('span', { class: 'lobby-names' }, l.names.join(', ')),
+        ),
+        btn,
+      );
+    });
+    this.lobbyList.replaceChildren(...(rows.length ? rows : [note('No one is flying online right now. Press Play online to open this world to others.')]));
+    if (this.lobbyError) this.lobbyList.append(note('Can\u2019t reach the lobby list; showing the last one.'));
   }
 
   /** Payload in kg for a slider position: the fraction of the room left under max takeoff weight. */
@@ -245,6 +314,7 @@ export class Menu {
     if (!this.pad || !this.pads.includes(this.pad)) this.pad = this.pads.find((p) => p.kind === 'ground' && p.rank === 3) ?? this.pads[0] ?? null;
     this.renderPads();
     this.root.classList.add('open');
+    this.pollLobbies();
     this.setResumable(resumable);
     if (!resumable) this.host.preview(this.aircraft, this.pad);
     (resumable ? this.resumeBtn : this.flyBtn).focus({ preventScroll: true });
@@ -267,6 +337,8 @@ export class Menu {
   close(): void {
     this.isOpen = false;
     this.root.classList.remove('open');
+    if (this.lobbyTimer) clearTimeout(this.lobbyTimer);
+    this.lobbyTimer = null;
   }
 
   private pick(aircraft: string): void {

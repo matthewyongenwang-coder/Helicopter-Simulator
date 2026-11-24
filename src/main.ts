@@ -16,7 +16,7 @@ import { randomSeed, seedFromString, seedToString } from './world/rng';
 import type { Helipad } from './world/structures';
 import { Multiplayer } from './game/multiplayer';
 import { NetClient } from './net/netClient';
-import { cleanName, ROOM_LIMIT } from './net/protocol';
+import { cleanName, cleanRoom, isLobbyInfo, ROOM_LIMIT, type LobbyInfo } from './net/protocol';
 import { PilotTags } from './ui/pilotTags';
 
 const params = new URLSearchParams(location.search);
@@ -141,6 +141,33 @@ function copyInvite(): void {
   else done(false);
 }
 
+/** Rooms with pilots in them, from the relay's lobby list (`ws://host` → `http://host/lobbies`). */
+async function listLobbies(): Promise<LobbyInfo[]> {
+  if (!relayUrl) return [];
+  const res = await fetch(`${relayUrl.replace(/^ws/i, 'http').replace(/\/$/, '')}/lobbies`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Lobby list: ${res.status}`);
+  const list: unknown = await res.json();
+  if (!Array.isArray(list)) return [];
+  // Only rooms named for a world seed can be joined (that is all the game ever opens).
+  const isSeed = (room: string) => seedToString(seedFromString(room)) === room;
+  return list.filter(isLobbyInfo).map((l) => ({ ...l, room: cleanRoom(l.room), names: l.names.map(cleanName) })).filter((l) => isSeed(l.room));
+}
+
+/** Fly in another room: its code is its world seed, so load that world and go online there. */
+function joinRoom(room: string): void {
+  room = cleanRoom(room);
+  if (!room) return;
+  if (room === seedText) {
+    goOnline();
+    return;
+  }
+  const p = new URLSearchParams(location.search);
+  p.set('seed', room);
+  p.set('online', '1');
+  p.delete('autostart');
+  location.search = p.toString();
+}
+
 function netStatusText(): string {
   if (netNoteTimer > 0) return netNote;
   if (!mp) return 'Pilots on the same world seed fly together.';
@@ -206,6 +233,9 @@ menu = new Menu(menuRoot, {
   goOnline: () => goOnline(),
   goOffline: () => goOffline(),
   copyInvite: () => copyInvite(),
+  room: seedText,
+  listLobbies,
+  joinRoom,
   setCallsign: () => {
     if (!mp) return;
     goOffline();

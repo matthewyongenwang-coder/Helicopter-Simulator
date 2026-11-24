@@ -110,6 +110,24 @@ export type RelayedMsg = (PoseMsg | EventMsg) & { from: number };
 
 export type ServerMsg = WelcomeMsg | JoinMsg | LeaveMsg | FullMsg | RelayedMsg;
 
+/** One open room in the lobby list (`GET /lobbies` on the relay). */
+export interface LobbyInfo {
+  /** Room code, which is the world seed ("K7M2-QX9"). */
+  room: string;
+  pilots: number;
+  /** Callsigns of the pilots in it. */
+  names: string[];
+}
+
+/** A room drops off the lobby list if it has not reported for this long, s (it reports every minute while occupied). */
+export const LOBBY_STALE = 150;
+
+/** True when a decoded lobby list entry is well formed. */
+export function isLobbyInfo(v: unknown): v is LobbyInfo {
+  const l = v as LobbyInfo;
+  return !!l && typeof l.room === 'string' && l.room.length <= 24 && Number.isInteger(l.pilots) && l.pilots > 0 && Array.isArray(l.names) && l.names.every((n) => typeof n === 'string');
+}
+
 /** Trim a callsign to printable characters and a sane length. */
 export function cleanName(name: unknown): string {
   const s = typeof name === 'string' ? name.replace(/[^\p{L}\p{N} _.\-]/gu, '').trim().slice(0, NAME_MAX) : '';

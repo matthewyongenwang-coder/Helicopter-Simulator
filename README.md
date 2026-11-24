@@ -142,7 +142,8 @@ missiles and flares. The card at the top of the screen shows their progress.
 
 Pilots on the same world seed fly together. Open the menu, set a callsign under
 **Multiplayer** and press **Play online**; **Copy invite link** gives a link that opens the
-same world, online. You see the others' aircraft, callsigns and minimap arrows, their
+same world, online. **Open lobbies** under it lists every room with pilots in it, from
+anywhere; **Join** loads that world and connects. You see the others' aircraft, callsigns and minimap arrows, their
 gunfire, missiles, flares and explosions, and any compound part one pilot destroys is
 destroyed for everyone (a pilot who joins later finds the same wrecks). Up to 16 pilots
 share a room. Your own compounds shoot only at you.

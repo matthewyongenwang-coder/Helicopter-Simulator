@@ -63,7 +63,7 @@ export class CameraRig {
   lookBy(dx: number, dy: number): void {
     this.recentering = false;
     this.lookYaw -= dx * 0.0042;
-    this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * 0.0042, -1.25, 1.25);
+    this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * 0.0042, -1.5, 1.5);
     this.vYaw = this.vPitch = 0;
   }
 
@@ -117,7 +117,7 @@ export class CameraRig {
     }
     // Swing the boom up or down with free-look pitch, keeping the same reach.
     const reach = Math.hypot(dist, height);
-    const elev = THREE.MathUtils.clamp(Math.atan2(height, dist) - pitchUp, -0.2, 1.45);
+    const elev = THREE.MathUtils.clamp(Math.atan2(height, dist) - pitchUp, -1.25, 1.5);
     const horiz = Math.cos(elev) * reach;
     const tx = pos.x + Math.sin(yaw) * horiz;
     const tz = pos.z - Math.cos(yaw) * horiz;

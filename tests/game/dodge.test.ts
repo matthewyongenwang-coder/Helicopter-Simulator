@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PVP } from '../../src/data/weapons';
 import { Combat, type PilotTarget, type PlayerState } from '../../src/game/combat';
 import { rng } from '../../src/world/rng';
 import { World } from '../../src/world/world';
@@ -49,7 +50,7 @@ function trial(g: number, tgo: number, side: number, seed: number, jink = false)
 
 describe('dodging missiles', () => {
   it('a pilot who holds course is hit, and hard', () => {
-    for (const seed of [1, 2, 3]) expect(trial(0, 0, 1, seed)).toBeGreaterThan(0.6);
+    for (const seed of [1, 2, 3]) expect(trial(0, 0, 1, seed)).toBeGreaterThan(PVP.missileDamage * 0.75);
   });
 
   it('a single hard break is still hit, whenever it starts', () => {

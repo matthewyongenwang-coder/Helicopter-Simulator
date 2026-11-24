@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { cleanName, cleanRoom, isEvent, isPose, MAX_MESSAGE, ROOM_LIMIT, WRECK_MEMORY, type PeerInfo, type ServerMsg } from '../../src/net/protocol';
+import { cleanName, cleanRoom, isEvent, isPose, LOBBY_STALE, MAX_MESSAGE, ROOM_LIMIT, WRECK_MEMORY, type LobbyInfo, type PeerInfo, type ServerMsg } from '../../src/net/protocol';
 
 /**
  * The multiplayer relay. One Durable Object per room; a room is a world seed.
@@ -12,10 +12,15 @@ import { cleanName, cleanRoom, isEvent, isPose, MAX_MESSAGE, ROOM_LIMIT, WRECK_M
  * joins later sees the same wrecks. A fallen compound is rebuilt after
  * WRECK_MEMORY seconds, so the room forgets it then. When the last pilot leaves,
  * it forgets everything.
+ *
+ * Rooms with pilots in them tell the single Lobby object who is there (on every
+ * join and leave, and once a minute while occupied), and `GET /lobbies` lists
+ * them, so the menu can show open rooms to join from anywhere.
  */
 
 export interface Env {
   ROOMS: DurableObjectNamespace<Room>;
+  LOBBY: DurableObjectNamespace<Lobby>;
   /** Optional comma-separated list of sites allowed to connect, e.g. "https://my-game.vercel.app". Unset allows any. */
   ALLOWED_ORIGINS?: string;
 }
@@ -27,10 +32,18 @@ const FLOOD = 400;
 /** Most wrecks a room remembers (a compound has a few dozen parts). */
 const MAX_PARTS = 5000;
 const MAX_CMPS = 500;
+/** How often an occupied room re-reports to the lobby, ms. */
+const LOBBY_REFRESH = 60_000;
+/** Most rooms the lobby list returns. */
+const LOBBY_MAX = 50;
+
+const lobbyOf = (env: Env) => env.LOBBY.get(env.LOBBY.idFromName('lobby'));
 
 interface Pilot {
   id: number;
   name: string;
+  /** The room's code: a Durable Object does not know the name it was made from. */
+  room: string;
   /** Has said hello and been welcomed. */
   ready: boolean;
 }
@@ -39,14 +52,33 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/') return new Response('Helicopter Simulator relay\n', { headers: { 'content-type': 'text/plain' } });
+    const allowed = env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
+    const origin = req.headers.get('Origin') ?? '';
+    const originOk = !allowed?.length || allowed.includes(origin);
+    if (url.pathname === '/lobbies') {
+      // Read by the game page from another origin, so it needs CORS.
+      const headers = {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        'access-control-allow-origin': allowed?.length ? origin : '*',
+        'access-control-allow-methods': 'GET',
+        vary: 'Origin',
+      };
+      if (!originOk) return new Response('Forbidden', { status: 403 });
+      if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers });
+      if (req.method !== 'GET') return new Response('Method not allowed', { status: 405, headers });
+      return new Response(JSON.stringify(await lobbyOf(env).list()), { headers });
+    }
     const m = url.pathname.match(/^\/room\/([^/]{1,40})$/);
     if (!m) return new Response('Not found', { status: 404 });
     if (req.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected a WebSocket', { status: 426 });
-    const allowed = env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()).filter(Boolean);
-    if (allowed?.length && !allowed.includes(req.headers.get('Origin') ?? '')) return new Response('Forbidden', { status: 403 });
+    if (!originOk) return new Response('Forbidden', { status: 403 });
     const room = cleanRoom(decodeURIComponent(m[1]));
     if (!room) return new Response('Bad room', { status: 400 });
-    return env.ROOMS.get(env.ROOMS.idFromName(room)).fetch(req);
+    // The room object is told its own code (a Durable Object does not know the name it came from).
+    const headers = new Headers(req.headers);
+    headers.set('X-Room', room);
+    return env.ROOMS.get(env.ROOMS.idFromName(room)).fetch(new Request(req, { headers }));
   },
 };
 
@@ -67,7 +99,8 @@ export class Room extends DurableObject<Env> {
     });
   }
 
-  async fetch(_req: Request): Promise<Response> {
+  async fetch(req: Request): Promise<Response> {
+    const room = cleanRoom(req.headers.get('X-Room') ?? '');
     const open = this.ctx.getWebSockets();
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
@@ -80,7 +113,7 @@ export class Room extends DurableObject<Env> {
     // Ids only need to be unique among the pilots connected now.
     let id = 1;
     for (const ws of open) id = Math.max(id, (this.pilot(ws)?.id ?? 0) + 1);
-    server.serializeAttachment({ id, name: 'Pilot', ready: false } satisfies Pilot);
+    server.serializeAttachment({ id, name: 'Pilot', room, ready: false } satisfies Pilot);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -118,6 +151,8 @@ export class Room extends DurableObject<Env> {
       const down = [...this.cmps];
       this.send(ws, { t: 'welcome', id: me.id, peers, parts: [...this.parts], cmps: down.map(([id]) => id), ages: down.map(([, at]) => (now - at) / 1000) });
       this.broadcast(ws, { t: 'join', id: me.id, name: me.name });
+      await this.report();
+      if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + LOBBY_REFRESH);
       return;
     }
     if (!me.ready) return;
@@ -170,12 +205,39 @@ export class Room extends DurableObject<Env> {
     const me = this.pilot(ws);
     if (me?.ready) this.broadcast(ws, { t: 'leave', id: me.id });
     const left = this.ctx.getWebSockets().filter((o) => o !== ws && o.readyState === WebSocket.OPEN);
+    if (me?.ready) await this.report(ws, me.room);
     if (left.length === 0) {
       // Last one out: the next flight in this world starts fresh.
       this.parts.clear();
       this.cmps.clear();
       await this.ctx.storage.deleteAll();
     }
+  }
+
+  /** Keep the lobby's entry for this room fresh while anyone is here. */
+  async alarm(): Promise<void> {
+    if (await this.report()) await this.ctx.storage.setAlarm(Date.now() + LOBBY_REFRESH);
+  }
+
+  /**
+   * Tell the lobby who is in this room (nobody: it drops off the list). `leaving` is a socket
+   * on its way out, not counted. Returns how many pilots are here.
+   */
+  private async report(leaving?: WebSocket, room = ''): Promise<number> {
+    const names: string[] = [];
+    for (const ws of this.ctx.getWebSockets()) {
+      const p = this.pilot(ws);
+      if (!p || ws === leaving || ws.readyState !== WebSocket.OPEN) continue;
+      room ||= p.room;
+      if (p.ready) names.push(p.name);
+    }
+    if (!room) return names.length;
+    try {
+      await lobbyOf(this.env).report(room, names);
+    } catch {
+      // The list is a convenience: flying together does not depend on it.
+    }
+    return names.length;
   }
 
   /** The compound fell less than WRECK_MEMORY seconds ago. */
@@ -223,5 +285,31 @@ export class Room extends DurableObject<Env> {
         // As above.
       }
     }
+  }
+}
+
+/**
+ * The list of occupied rooms, one object for the whole relay. Each entry is the room's last
+ * report; a room that stops reporting (it should not, but a crash could) ages out.
+ */
+export class Lobby extends DurableObject<Env> {
+  async report(room: string, names: string[]): Promise<void> {
+    room = cleanRoom(room);
+    if (!room) return;
+    if (names.length) await this.ctx.storage.put(room, { names: names.slice(0, ROOM_LIMIT).map(cleanName), at: Date.now() });
+    else await this.ctx.storage.delete(room);
+  }
+
+  async list(): Promise<LobbyInfo[]> {
+    const now = Date.now();
+    const out: LobbyInfo[] = [];
+    const stale: string[] = [];
+    for (const [room, v] of await this.ctx.storage.list<{ names: string[]; at: number }>({ limit: 1000 })) {
+      if (!v || now - v.at > LOBBY_STALE * 1000) stale.push(room);
+      else out.push({ room, pilots: v.names.length, names: v.names });
+    }
+    for (let i = 0; i < stale.length; i += 128) await this.ctx.storage.delete(stale.slice(i, i + 128));
+    out.sort((a, b) => b.pilots - a.pilots || a.room.localeCompare(b.room));
+    return out.slice(0, LOBBY_MAX);
   }
 }

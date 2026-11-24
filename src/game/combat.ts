@@ -878,7 +878,7 @@ export class Combat {
     const dx = a.x - ox, dz = a.z - oz;
     const tof = Math.hypot(dx, dy, dz) / gun.speed;
     dy += 0.5 * G * tof * tof;
-    // Inside the turret's travel.
+    // Inside the turret's travel (full travel aims anywhere).
     const b = this.rotate(p, dx, dy, dz, this.u, true);
     const l = Math.hypot(b[0], b[1], b[2]) || 1;
     const R = Math.PI / 180;
