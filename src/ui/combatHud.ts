@@ -27,6 +27,8 @@ export interface CombatHudFrame {
 
 const SVG = 'http://www.w3.org/2000/svg';
 const MARKERS = 8;
+/** Inbound missiles marked at once, nearest first. */
+const MISSILE_MARKS = 4;
 const TICKS = 8;
 
 function svg(tag: string, attrs: Record<string, string | number>): SVGElement {
@@ -48,6 +50,7 @@ export class CombatHud {
   private threats: HTMLElement[] = [];
   private lockBox = el('div', { class: 'lockbox', 'aria-hidden': 'true' }, el('span', {}, 'LOCK'));
   private markers: { root: HTMLElement; label: HTMLElement }[] = [];
+  private missileMarks: { root: HTMLElement; label: HTMLElement; arrow: HTMLElement }[] = [];
   private card = el('div', { class: 'target-card hud-panel', 'aria-live': 'polite' });
   private cardName = el('span', { class: 'name' });
   private cardStatus = el('span', { class: 'status' });
@@ -96,6 +99,13 @@ export class CombatHud {
       const label = el('span', { class: 'num' });
       const m = el('div', { class: 'marker', 'aria-hidden': 'true' }, el('b', {}), label);
       this.markers.push({ root: m, label });
+      root.append(m);
+    }
+    for (let i = 0; i < MISSILE_MARKS; i++) {
+      const label = el('span', { class: 'num' });
+      const arrow = el('i', {});
+      const m = el('div', { class: 'marker missile', 'aria-hidden': 'true' }, el('b', {}, arrow), label);
+      this.missileMarks.push({ root: m, label, arrow });
       root.append(m);
     }
     this.card.append(el('div', { class: 'head' }, this.cardName, this.cardStatus), this.cardMeta, el('div', { class: 'bar' }, this.cardBar));
@@ -174,6 +184,7 @@ export class CombatHud {
 
     this.updateLock(f);
     this.updateMarkers(f);
+    this.updateMissileMarks(f);
     this.updateCard(f, dt);
     this.updatePanel(f);
     this.updateSupply(f);
@@ -267,6 +278,47 @@ export class CombatHud {
       m.root.classList.toggle('edge', off);
       m.root.classList.toggle('hot', c.engaged);
       m.label.textContent = km(c.dist);
+    });
+  }
+
+  /**
+   * A red ring over every missile chasing the aircraft, with its range. Off
+   * screen it rides the edge with an arrow pointing the way it is coming from.
+   * A missile pulled off by a flare drops its marker: that is the cue it missed.
+   */
+  private updateMissileMarks(f: CombatHudFrame): void {
+    const W = window.innerWidth, H = window.innerHeight, pad = 40;
+    const list = f.alive
+      ? f.combat.missiles
+          .filter((m) => m.alive && m.enemy && m.target.kind === 'player')
+          .map((m) => ({ m, d: Math.hypot(m.x - f.x, m.y - f.y, m.z - f.z) }))
+          .sort((a, b) => a.d - b.d)
+      : [];
+    this.missileMarks.forEach((mk, i) => {
+      const e = list[i];
+      if (!e) {
+        mk.root.style.display = 'none';
+        return;
+      }
+      const s = f.project(e.m.x, e.m.y, e.m.z);
+      let x = s.x, y = s.y;
+      const off = !s.front || x < pad || x > W - pad || y < pad || y > H - pad;
+      let dx = x - W / 2, dy = y - H / 2;
+      if (off) {
+        if (!s.front) {
+          dx = -dx;
+          dy = -dy;
+        }
+        const k = Math.min((W / 2 - pad) / Math.max(1e-3, Math.abs(dx)), (H / 2 - pad) / Math.max(1e-3, Math.abs(dy)));
+        x = W / 2 + dx * k;
+        y = H / 2 + dy * k;
+        mk.arrow.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+      }
+      mk.root.style.display = '';
+      mk.root.style.transform = `translate(${x}px, ${y}px)`;
+      mk.root.classList.toggle('edge', off);
+      mk.root.classList.toggle('close', e.d < 600);
+      mk.label.textContent = km(e.d);
     });
   }
 

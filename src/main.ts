@@ -257,8 +257,12 @@ const camDir = new THREE.Vector3();
 /** World point → screen pixels. */
 const project = (x: number, y: number, z: number) => {
   const o = game.engine.origin;
-  projV.set(x - o.x, y, z - o.z).project(game.engine.camera);
-  return { x: ((projV.x + 1) / 2) * window.innerWidth, y: ((1 - projV.y) / 2) * window.innerHeight, front: projV.z < 1 };
+  const cam = game.engine.camera;
+  // In front means negative view-space z: NDC z can't tell with the reversed depth buffer.
+  projV.set(x - o.x, y, z - o.z).applyMatrix4(cam.matrixWorldInverse);
+  const front = projV.z < 0;
+  projV.applyMatrix4(cam.projectionMatrix);
+  return { x: ((projV.x + 1) / 2) * window.innerWidth, y: ((1 - projV.y) / 2) * window.innerHeight, front };
 };
 let beepTimer = 0;
 let crackTimer = 0;

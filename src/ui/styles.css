@@ -1237,6 +1237,81 @@ kbd {
   }
 }
 
+/* Missiles chasing you: a red ring on the missile, its range under it; on the edge, an arrow out to it. */
+.marker.missile {
+  margin-top: -11px;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  z-index: 2;
+}
+.marker.missile b {
+  position: relative;
+  transform: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+  animation: missile-pulse 0.5s ease-in-out infinite alternate;
+}
+.marker.missile b::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.marker.missile b i {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  margin: -6px 0 0 14px;
+  border-top: 6px solid transparent;
+  border-bottom: 6px solid transparent;
+  border-left: 9px solid var(--danger);
+  transform-origin: -14px 6px;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.9));
+}
+.marker.missile.edge {
+  opacity: 1;
+}
+.marker.missile.edge b i {
+  display: block;
+}
+.marker.missile span {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(70, 8, 6, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 69, 58, 0.7);
+}
+.marker.missile.close b {
+  background: rgba(255, 69, 58, 0.35);
+  animation-duration: 0.22s;
+}
+@keyframes missile-pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marker.missile b {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .marker.missile span {
+    display: block;
+  }
+}
+
 /* Other pilots: a blue ring and their callsign, to read as "friend" against the red compounds. */
 /* Pilots within 3 km: a down-pointing chevron over the aircraft, clear against sky and ground. */
 .marker.pilot {
